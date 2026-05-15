@@ -4,6 +4,8 @@ Roadmap 依目前 scaffold 狀態切成可落地階段。每階段都應有測�
 
 ## v0.1：本機可跑通 demo
 
+目前狀態：已完成本機 demo 主流程。`/demo` 可以建立並核准 `https://example.com` 任務，worker 可完成 Playwright 截圖，UI 可顯示 completed status、evaluation、screenshot 與 HTML artifact。
+
 目標：讓 Docker Compose 從乾淨環境啟動後，可以建立、核准、執行一個 allowlisted browser task，產出 HTML/screenshot 與 evaluation。
 
 範圍：

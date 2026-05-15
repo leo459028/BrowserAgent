@@ -52,7 +52,17 @@ cp .env.example .env
 docker compose up --build
 ```
 
-### 3) Create a task
+### 3) Open the demo UI
+
+Open:
+
+```text
+http://localhost:8000/demo
+```
+
+Click **Run demo**. The console creates and approves an allowlisted `https://example.com` task, then shows the task status, evaluation result, browser steps, screenshot preview, and HTML artifact link.
+
+### 4) Create a task manually
 
 ```bash
 curl -X POST http://localhost:8000/v1/tasks \
@@ -66,7 +76,7 @@ curl -X POST http://localhost:8000/v1/tasks \
   }'
 ```
 
-### 4) Approve the task
+### 5) Approve the task
 
 ```bash
 curl -X POST http://localhost:8000/v1/tasks/<TASK_ID>/approve \

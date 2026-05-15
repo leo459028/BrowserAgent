@@ -88,7 +88,7 @@ erDiagram
 - `status`：目前實際用到 `created`, `blocked`, `approved`, `executing`, `completed`, `review`。
 - `risk_level`：policy 用於阻擋 `high`/`critical`。
 - `metadata`：存放 domains、start_url、expected_domain、planner steps、browser_result、evaluation 等。
-- `approved_by`：schema/ORM 是 UUID，但 API 目前傳入字串，需修正。
+- `approved_by`：schema/ORM 是 UUID。v0.1 demo 會寫入固定 demo user UUID；顯示用 actor label 會存在 `approvals.approved_by`。
 
 ### `task_steps`
 
@@ -96,7 +96,7 @@ erDiagram
 
 ### `task_artifacts`
 
-schema 已存在，但目前 `LocalArtifactStore` 只把檔案寫到磁碟，`TaskRunner` 沒有把 artifact rows 寫入此表。artifact URI 目前保存在 `task.metadata.browser_result` 或 evaluation input 中。
+`TaskRunner` 會在 screenshot/html artifact 寫入本地磁碟後，同步新增 artifact row。`GET /v1/tasks/{task_id}` 會回傳 artifact summary，`GET /v1/artifacts/{artifact_id}/content` 會在確認路徑位於 `ARTIFACT_BASE_PATH` 內後提供內容預覽或下載。
 
 ### `evaluations`
 
@@ -111,7 +111,7 @@ schema 已存在，但目前 `LocalArtifactStore` 只把檔案寫到磁碟，`Ta
 
 ### `approvals`
 
-記錄人工核准資訊。`approved_by` 是 text，和 `tasks.approved_by` 型別不一致。
+記錄人工核准資訊。`approved_by` 是 text，用來保存顯示與稽核用 actor label；`tasks.approved_by` 保存實際 user UUID。
 
 ### `audit_logs`
 
@@ -138,8 +138,8 @@ ON CONFLICT (tenant_id, email) DO NOTHING;
 
 ## 建議修正
 
-- 將 `tasks.approved_by` 改為 text，或改成真正 user UUID 並新增 `approval_actor_email`。
+- 正式 auth/RBAC 上線後，將 demo 固定 user UUID 改為從 token claims 解析。
 - 在 migration/seed 腳本內建立 default tenant/user，或移除固定 UUID 假設。
-- 將 artifact 寫入 `task_artifacts` 表，避免只存在 metadata。
+- 擴充 `task_artifacts` retention、content length 與 tenant-scoped access control。
 - 補上狀態 enum/constraint，避免任意 status 字串。
 - 補上 idempotency key unique index 與 correlation ID 查詢 index。
