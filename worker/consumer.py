@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
@@ -27,7 +28,7 @@ def main():
             continue
 
         event = json.loads(msg.value().decode("utf-8"))
-        task_id = event["task_id"]
+        task_id = uuid.UUID(event["task_id"])
 
         session: Session = get_session_factory()()
         try:

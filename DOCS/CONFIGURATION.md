@@ -58,31 +58,25 @@
 
 ## Playwright 設定注意
 
-`Dockerfile` 安裝了 Playwright Python package 與常見 Chromium 依賴，但目前沒有執行：
+`Dockerfile` 會執行：
 
 ```dockerfile
-RUN playwright install chromium
+RUN playwright install --with-deps chromium
 ```
 
-若 worker 執行時出現 browser executable 不存在，需先補 Dockerfile，或在 container 中手動執行：
-
-```powershell
-docker compose exec worker playwright install chromium
-```
-
-較乾淨的修正是把 install step 放入 image build。
+第一次 `docker compose up --build` 會下載 Chromium、headless shell、FFmpeg 與必要 Linux runtime，時間會較久。後續 build 通常會吃 Docker layer cache。
 
 ## Artifact 設定注意
 
-目前 artifact 寫到 `ARTIFACT_BASE_PATH`，路徑格式：
+目前 artifact 寫到 `ARTIFACT_BASE_PATH`，並同步寫入 `task_artifacts` 資料表。路徑格式：
 
 ```text
 <base>/<YYYY>/<MM>/<DD>/<task_id>/<artifact_type>-<sha12>.<suffix>
 ```
 
-即使 compose 啟動了 MinIO，現在並未呼叫 boto3 或 MinIO API。若要 production 化，應改成：
+即使 compose 啟動了 MinIO，v0.1 現在仍未呼叫 boto3 或 MinIO API。若要 production 化，應改成：
 
 - 本地暫存檔
 - 上傳 object store
-- 將 object URI 與 checksum 寫入 `task_artifacts`
+- 將 object URI、checksum、content type 與 retention metadata 寫入 `task_artifacts`
 - 依 tenant/task 設定 retention policy

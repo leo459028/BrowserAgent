@@ -9,6 +9,8 @@ copy .env.example .env
 docker compose up --build
 ```
 
+Compose 會在 `api` 與 `worker` 啟動前執行 `python scripts/bootstrap.py`，建立 schema、seed demo tenant/user，並建立本機 Kafka topics。
+
 另開 terminal 檢查：
 
 ```powershell
@@ -51,6 +53,16 @@ docker compose exec kafka kafka-topics.sh --bootstrap-server kafka:9092 --create
 
 ## 4. 驗證 task flow
 
+最短 demo 路徑：
+
+```text
+http://localhost:8000/demo
+```
+
+點擊 `Run demo` 後，UI 會建立並核准 `https://example.com` 任務，輪詢任務狀態，最後顯示 evaluation、steps、screenshot preview 與 HTML artifact 連結。
+
+API 手動驗證如下。
+
 建立任務：
 
 ```powershell
@@ -74,7 +86,7 @@ curl.exe -X POST http://localhost:8000/v1/tasks -H "Content-Type: application/js
 ```powershell
 curl.exe -X POST http://localhost:8000/v1/tasks/<TASK_ID>/approve `
   -H "Content-Type: application/json" `
-  -d "{\"approved_by\":\"00000000-0000-0000-0000-000000000002\",\"note\":\"local test\"}"
+  -d "{\"approved_by\":\"ops@example.com\",\"note\":\"local test\"}"
 ```
 
 讀取任務：
@@ -83,7 +95,7 @@ curl.exe -X POST http://localhost:8000/v1/tasks/<TASK_ID>/approve `
 curl.exe http://localhost:8000/v1/tasks/<TASK_ID>
 ```
 
-注意：如果仍沿用 README 中的 `approved_by:"ops@example.com"`，可能因 `tasks.approved_by` 是 UUID 欄位而失敗。
+注意：v0.1 demo 尚未實作正式登入；API 會把 task 的 approver 寫成固定 demo user UUID，並把 `approved_by` request 字串保存為 approval 顯示 label。
 
 ## 5. 常見故障與處理
 
@@ -128,15 +140,15 @@ curl.exe http://localhost:8000/v1/tasks/<TASK_ID>
 
 ### worker Playwright 失敗
 
-可能原因：Docker image 沒有安裝 Chromium browser binary。
+可能原因：Docker image 沒有成功安裝 Chromium browser binary，或舊 image cache 仍在使用修正前的 Dockerfile。
 
 處理：
 
 ```powershell
-docker compose exec worker playwright install chromium
+docker compose build --no-cache api worker
 ```
 
-長期修正：在 `Dockerfile` 補上 `RUN playwright install chromium`。
+目前 `Dockerfile` 已包含 `RUN playwright install --with-deps chromium`。第一次 build 下載瀏覽器 runtime 會比較久。
 
 ### domain 被阻擋
 

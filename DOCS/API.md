@@ -11,6 +11,12 @@ API 由 `src/browser_agent/api.py` 定義，目前沒有 auth middleware。所�
 
 ## Health
 
+## Demo UI
+
+### `GET /demo`
+
+本機 v0.1 demo console。頁面內建 `https://example.com` allowlisted task payload，可一鍵建立任務、核准任務、輪詢狀態，並顯示 evaluation、steps、screenshot preview 與 HTML artifact 連結。
+
 ### `GET /healthz`
 
 回傳 process-level health。
@@ -92,6 +98,20 @@ Response 欄位：
 
 `steps[]` 由 `TaskRunner` 根據 planner output 建立，目前 step 狀態不會在每一步完成後更新。
 
+`artifacts[]` 會回傳已寫入 `task_artifacts` 的 artifact 摘要，包含：
+
+- `id`
+- `artifact_type`
+- `uri`
+- `sha256`
+- `metadata`
+- `created_at`
+- `download_url`
+
+### `GET /v1/artifacts/{artifact_id}/content`
+
+讀取 screenshot 或 HTML artifact。API 只允許讀取 `ARTIFACT_BASE_PATH` 底下的檔案；若 artifact URI 指向 base path 外部，會回 403。
+
 ### `POST /v1/tasks/{task_id}/approve`
 
 核准任務並發布 `agent.tasks.approved` Kafka event。
@@ -115,7 +135,7 @@ Response：
 }
 ```
 
-注意：`tasks.approved_by` 在 ORM 是 UUID 欄位，但 API 目前把 `approved_by` 字串寫入該欄位；這在 PostgreSQL 上可能導致型別錯誤。`approvals.approved_by` 是 text。建議 roadmap 優先修正。
+注意：v0.1 demo 仍未實作正式登入。API 會把 `tasks.approved_by` 寫成固定 demo user UUID，並把 request 內的 `approved_by` 字串保存在 `approvals.approved_by` 作為顯示與稽核用 label。
 
 ## Skills
 

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi import Request
+from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -17,6 +20,7 @@ from .kafka import get_bus
 from .logging import configure_logging
 
 router = APIRouter()
+templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 def get_session():
     session = get_session_factory()()
@@ -31,6 +35,21 @@ def _tenant_id() -> uuid.UUID:
 def _actor() -> uuid.UUID:
     return uuid.UUID("00000000-0000-0000-0000-000000000002")
 
+def _demo_actor_label() -> str:
+    return "ops@example.com"
+
+DEMO_TASK_PAYLOAD = {
+    "title": "Capture example.com",
+    "instructions": "Open the allowlisted site and capture a screenshot.",
+    "priority": 1,
+    "risk_level": "low",
+    "metadata": {
+        "domains": ["example.com"],
+        "start_url": "https://example.com",
+        "expected_domain": "example.com",
+    },
+}
+
 @router.get("/healthz")
 def healthz():
     return {"status": "ok"}
@@ -43,6 +62,17 @@ def readyz(session: Session = Depends(get_session)):
 @router.get("/metrics")
 def metrics():
     return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+@router.get("/demo")
+def demo(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "demo.html",
+        {
+            "demo_payload": DEMO_TASK_PAYLOAD,
+            "demo_actor": _demo_actor_label(),
+        },
+    )
 
 @router.post("/v1/tasks")
 def create_task(req: TaskCreateRequest, session: Session = Depends(get_session)):
@@ -66,6 +96,37 @@ def get_task(task_id: str, session: Session = Depends(get_session)):
     task = session.get(models.Task, uuid.UUID(task_id))
     if not task:
         raise HTTPException(status_code=404, detail="task not found")
+    return serialize_task(task)
+
+@router.get("/v1/artifacts/{artifact_id}/content")
+def get_artifact_content(artifact_id: str, session: Session = Depends(get_session)):
+    artifact = session.get(models.TaskArtifact, uuid.UUID(artifact_id))
+    if not artifact:
+        raise HTTPException(status_code=404, detail="artifact not found")
+    settings = get_settings()
+    path = resolve_artifact_file_path(settings.artifact_base_path, artifact.uri)
+    metadata = artifact.metadata_ or {}
+    media_type = metadata.get("media_type") or "application/octet-stream"
+    response = FileResponse(path, media_type=media_type, filename=path.name)
+    response.headers["Content-Disposition"] = f'inline; filename="{path.name}"'
+    return response
+
+def serialize_task(task) -> dict:
+    metadata = getattr(task, "metadata_", None)
+    if metadata is None:
+        metadata = getattr(task, "metadata", {})
+    artifacts = [
+        {
+            "id": str(a.id),
+            "artifact_type": a.artifact_type,
+            "uri": a.uri,
+            "sha256": a.sha256,
+            "metadata": getattr(a, "metadata_", None) if getattr(a, "metadata_", None) is not None else getattr(a, "metadata", {}),
+            "created_at": a.created_at.isoformat(),
+            "download_url": f"/v1/artifacts/{a.id}/content",
+        }
+        for a in sorted(getattr(task, "artifacts", []), key=lambda x: x.created_at)
+    ]
     return {
         "id": str(task.id),
         "tenant_id": str(task.tenant_id),
@@ -74,7 +135,7 @@ def get_task(task_id: str, session: Session = Depends(get_session)):
         "status": task.status,
         "priority": task.priority,
         "risk_level": task.risk_level,
-        "metadata": task.metadata,
+        "metadata": metadata,
         "created_at": task.created_at.isoformat(),
         "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         "steps": [
@@ -91,7 +152,24 @@ def get_task(task_id: str, session: Session = Depends(get_session)):
             }
             for s in sorted(task.steps, key=lambda x: x.step_no)
         ],
+        "artifacts": artifacts,
     }
+
+def resolve_artifact_file_path(base_path: str, uri: str) -> Path:
+    base = Path(base_path).resolve()
+    candidate = Path(uri)
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(base)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="artifact path is outside artifact storage")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="artifact file not found")
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="artifact file not found")
+    return resolved
 
 @router.post("/v1/tasks/{task_id}/approve")
 def approve_task(task_id: str, req: TaskApproveRequest, session: Session = Depends(get_session)):
@@ -101,7 +179,7 @@ def approve_task(task_id: str, req: TaskApproveRequest, session: Session = Depen
     task = session.get(models.Task, uuid.UUID(task_id))
     if not task:
         raise HTTPException(status_code=404, detail="task not found")
-    approval = orch.approve_task(task, req.approved_by, req.note)
+    approval = orch.approve_task(task, _actor(), req.approved_by, req.note)
     session.commit()
     return {
         "task_id": str(task.id),

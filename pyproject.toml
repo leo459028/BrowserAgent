@@ -7,3 +7,6 @@ name = "browser-agent-prod"
 version = "1.0.0"
 description = "Enterprise Browser Agent platform scaffold"
 requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
