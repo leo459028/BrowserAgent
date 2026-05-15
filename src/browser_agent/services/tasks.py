@@ -11,7 +11,7 @@ def set_task_status(session: Session, task: models.Task, status: str, extra: dic
     task.status = status
     task.updated_at = datetime.now(timezone.utc)
     if extra:
-        task.metadata = {**(task.metadata or {}), **extra}
+        task.metadata_ = {**(task.metadata_ or {}), **extra}
     session.add(task)
     return task
 

@@ -22,9 +22,9 @@ class TaskRunner:
             "title": task.title,
             "instructions": task.instructions,
             "risk_level": task.risk_level,
-            "metadata": task.metadata,
+            "metadata": task.metadata_,
         })
-        task.metadata = {**(task.metadata or {}), "plan": plan["steps"]}
+        task.metadata_ = {**(task.metadata_ or {}), "plan": plan["steps"]}
         set_task_status(self.session, task, "executing")
         task.started_at = datetime.now(timezone.utc)
         self.session.add(task)
@@ -44,14 +44,23 @@ class TaskRunner:
         result = self.browser.execute(
             {
                 "id": str(task.id),
-                "metadata": task.metadata,
+                "metadata": task.metadata_,
             },
             self.artifact_store,
             self.allowed_domains,
         )
 
+        for artifact in result.artifacts:
+            self.session.add(models.TaskArtifact(
+                task_id=task.id,
+                artifact_type=artifact["type"],
+                uri=artifact["uri"],
+                sha256=artifact.get("sha256"),
+                metadata_={"media_type": _artifact_media_type(artifact["type"])},
+            ))
+
         eval_result = evaluate_execution(
-            {"metadata": task.metadata},
+            {"metadata": task.metadata_},
             {
                 "final_url": result.final_url,
                 "html": result.html,
@@ -68,8 +77,8 @@ class TaskRunner:
         ))
         task.completed_at = datetime.now(timezone.utc)
         task.status = "completed" if eval_result.verdict == "pass" else "review"
-        task.metadata = {
-            **(task.metadata or {}),
+        task.metadata_ = {
+            **(task.metadata_ or {}),
             "browser_result": {
                 "final_url": result.final_url,
                 "title": result.title,
@@ -82,4 +91,12 @@ class TaskRunner:
             },
         }
         self.session.add(task)
-        return task.metadata
+        return task.metadata_
+
+
+def _artifact_media_type(artifact_type: str) -> str:
+    if artifact_type == "screenshot":
+        return "image/png"
+    if artifact_type == "html":
+        return "text/html; charset=utf-8"
+    return "application/octet-stream"

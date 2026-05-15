@@ -95,6 +95,6 @@ Compose 內 API/worker 使用 `postgres` hostname；本機 alembic 使用 localh
 
 - 不要把藍圖中的完整狀態機當成已實作；目前狀態流較短。
 - 不要直接假設 Redis/MinIO 已接上核心流程；目前只是 compose/config 存在。
-- 修改 approval 時，先處理 `tasks.approved_by` 型別不一致。
-- 修改 Dockerfile 時，補上 Playwright browser install，否則 worker 很可能無法啟動 Chromium。
+- 修改 approval 時，維持 `tasks.approved_by` 保存 user UUID、`approvals.approved_by` 保存顯示 label 的分工。
+- 修改 Dockerfile 時，保留 Playwright browser install，否則 worker 很可能無法啟動 Chromium。
 - 新增任何 task lifecycle 事件時，同步更新 Kafka topics、runbook、observability 與 tests。

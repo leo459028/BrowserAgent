@@ -36,7 +36,7 @@
 
 - 工作目錄目前不是 git repo。
 - API 使用固定 tenant/user UUID，但 schema 有 foreign key；若資料庫沒有 seed 這兩筆資料，建立 task 會失敗。
-- `Dockerfile` 安裝了 Playwright Python 套件與 Linux library，但目前沒有執行 `playwright install chromium`。
+- `Dockerfile` 會在 build 階段安裝 Playwright Chromium；第一次 build 會下載瀏覽器 runtime，時間較久。
 - `metrics.py` 定義了 Prometheus counters/histogram，但目前核心流程沒有更新這些 metrics。
 - `docker-compose.yml` 有 MinIO，但目前 artifact store 實作是本地檔案寫入，尚未使用 MinIO client。
 - `scripts/create_topics.sh` 預設 `KAFKA_CONTAINER=kafka`；Docker Compose 實際 container 名稱可能不同。
