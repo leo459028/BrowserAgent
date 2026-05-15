@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Browser Agent Demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --panel-soft: #eef2f7;
+      --text: #17202a;
+      --muted: #637083;
+      --line: #d8dee8;
+      --accent: #116a63;
+      --accent-strong: #0b4f4a;
+      --danger: #b42318;
+      --warn: #915c00;
+      --ok: #117a37;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0 40px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    button {
+      min-height: 38px;
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: white;
+      border-radius: 6px;
+      padding: 0 14px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: white;
+      color: var(--accent);
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.58;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.8fr) minmax(420px, 1.2fr);
+      gap: 16px;
+      align-items: start;
+    }
+    section, .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .stack { display: grid; gap: 16px; }
+    .kv {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr);
+      gap: 8px 12px;
+      align-items: start;
+    }
+    .label { color: var(--muted); }
+    .value {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 13px;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 2px 9px;
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-weight: 650;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
+    .status.completed, .status.ready, .status.pass { color: var(--ok); background: #e7f7ed; }
+    .status.review, .status.warn, .status.executing, .status.approved { color: var(--warn); background: #fff4db; }
+    .status.failed, .status.error, .status.blocked { color: var(--danger); background: #fde8e5; }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: #111827;
+      color: #eef2ff;
+      border-radius: 6px;
+      padding: 12px;
+      max-height: 320px;
+      overflow: auto;
+      font-size: 12px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      padding: 8px 6px;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 650; }
+    img.preview {
+      display: block;
+      width: 100%;
+      max-height: 520px;
+      object-fit: contain;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fdfdfd;
+    }
+    a { color: var(--accent-strong); font-weight: 650; }
+    .muted { color: var(--muted); }
+    .hidden { display: none; }
+    @media (max-width: 860px) {
+      header { align-items: stretch; flex-direction: column; }
+      .grid { grid-template-columns: 1fr; }
+      .kv { grid-template-columns: 92px minmax(0, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Browser Agent Demo</h1>
+        <div class="muted">Local v0.1 console for the allowlisted example.com task.</div>
+      </div>
+      <div class="toolbar">
+        <button id="run-demo">Run demo</button>
+        <button id="refresh" class="secondary" disabled>Refresh</button>
+      </div>
+    </header>
+
+    <div class="grid">
+      <div class="stack">
+        <section>
+          <h2>Runtime</h2>
+          <div class="kv">
+            <div class="label">Health</div><div><span id="health" class="status">checking</span></div>
+            <div class="label">Ready</div><div><span id="ready" class="status">checking</span></div>
+            <div class="label">Actor</div><div class="value">{{ demo_actor }}</div>
+            <div class="label">Target</div><div class="value">https://example.com</div>
+          </div>
+        </section>
+
+        <section>
+          <h2>Task</h2>
+          <div class="kv">
+            <div class="label">Task ID</div><div id="task-id" class="value">-</div>
+            <div class="label">Status</div><div><span id="task-status" class="status">idle</span></div>
+            <div class="label">Final URL</div><div id="final-url" class="value">-</div>
+            <div class="label">Title</div><div id="page-title" class="value">-</div>
+            <div class="label">Score</div><div id="score" class="value">-</div>
+          </div>
+        </section>
+
+        <section>
+          <h2>Payload</h2>
+          <pre id="payload"></pre>
+        </section>
+      </div>
+
+      <div class="stack">
+        <section>
+          <h2>Artifacts</h2>
+          <div id="artifacts" class="muted">Run the demo to produce screenshot and HTML artifacts.</div>
+        </section>
+
+        <section>
+          <h2>Steps</h2>
+          <div id="steps" class="muted">No steps yet.</div>
+        </section>
+
+        <section>
+          <h2>Evaluation</h2>
+          <pre id="evaluation">{}</pre>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const payload = {{ demo_payload | tojson }};
+    const actor = {{ demo_actor | tojson }};
+    let currentTaskId = null;
+    let pollTimer = null;
+
+    const $ = (id) => document.getElementById(id);
+    $("payload").textContent = JSON.stringify(payload, null, 2);
+
+    function setStatus(id, value) {
+      const el = $(id);
+      el.textContent = value;
+      el.className = "status " + String(value).toLowerCase();
+    }
+
+    async function getJson(url, options) {
+      const response = await fetch(url, options);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`${response.status} ${response.statusText}: ${text}`);
+      }
+      return response.json();
+    }
+
+    async function checkRuntime() {
+      try {
+        await getJson("/healthz");
+        setStatus("health", "ready");
+      } catch (error) {
+        setStatus("health", "error");
+      }
+      try {
+        await getJson("/readyz");
+        setStatus("ready", "ready");
+      } catch (error) {
+        setStatus("ready", "error");
+      }
+    }
+
+    async function runDemo() {
+      $("run-demo").disabled = true;
+      $("refresh").disabled = true;
+      setStatus("task-status", "creating");
+      try {
+        const created = await getJson("/v1/tasks", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload),
+        });
+        currentTaskId = created.task_id;
+        $("task-id").textContent = currentTaskId;
+        setStatus("task-status", created.status);
+
+        await getJson(`/v1/tasks/${currentTaskId}/approve`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({approved_by: actor, note: "Approved from local demo console"}),
+        });
+        $("refresh").disabled = false;
+        await refreshTask();
+        startPolling();
+      } catch (error) {
+        setStatus("task-status", "error");
+        $("evaluation").textContent = error.message;
+        $("run-demo").disabled = false;
+      }
+    }
+
+    function startPolling() {
+      clearInterval(pollTimer);
+      pollTimer = setInterval(refreshTask, 1500);
+    }
+
+    async function refreshTask() {
+      if (!currentTaskId) return;
+      const task = await getJson(`/v1/tasks/${currentTaskId}`);
+      renderTask(task);
+      if (["completed", "review", "failed", "blocked"].includes(task.status)) {
+        clearInterval(pollTimer);
+        $("run-demo").disabled = false;
+      }
+    }
+
+    function renderTask(task) {
+      setStatus("task-status", task.status);
+      $("final-url").textContent = task.metadata?.browser_result?.final_url || "-";
+      $("page-title").textContent = task.metadata?.browser_result?.title || "-";
+      $("score").textContent = task.metadata?.evaluation?.score ?? "-";
+      $("evaluation").textContent = JSON.stringify(task.metadata?.evaluation || {}, null, 2);
+      renderSteps(task.steps || []);
+      renderArtifacts(task.artifacts || []);
+    }
+
+    function renderSteps(steps) {
+      if (!steps.length) {
+        $("steps").innerHTML = '<span class="muted">No steps yet.</span>';
+        return;
+      }
+      $("steps").innerHTML = `<table><thead><tr><th>#</th><th>Action</th><th>Target</th><th>Status</th></tr></thead><tbody>${steps.map((step) => `
+        <tr>
+          <td>${step.step_no}</td>
+          <td>${escapeHtml(step.action_type)}</td>
+          <td>${escapeHtml(step.target || "-")}</td>
+          <td>${escapeHtml(step.status)}</td>
+        </tr>
+      `).join("")}</tbody></table>`;
+    }
+
+    function renderArtifacts(artifacts) {
+      if (!artifacts.length) {
+        $("artifacts").innerHTML = '<span class="muted">No artifacts yet.</span>';
+        return;
+      }
+      const screenshot = artifacts.find((artifact) => artifact.artifact_type === "screenshot");
+      const links = artifacts.map((artifact) =>
+        `<a href="${artifact.download_url}" target="_blank" rel="noreferrer">${escapeHtml(artifact.artifact_type)}</a>`
+      ).join(" · ");
+      $("artifacts").innerHTML = `
+        ${screenshot ? `<img class="preview" src="${screenshot.download_url}" alt="Browser screenshot artifact">` : ""}
+        <p>${links}</p>
+      `;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    $("run-demo").addEventListener("click", runDemo);
+    $("refresh").addEventListener("click", refreshTask);
+    checkRuntime();
+  </script>
+</body>
+</html>

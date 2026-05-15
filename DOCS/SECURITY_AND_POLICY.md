@@ -39,7 +39,7 @@ approval API 已實作，但和 policy 的關係還不完整：
 - API 可把 task 狀態改成 `approved`。
 - worker 只執行 `approved` task。
 - `high`/`critical` risk task 目前在 create 階段被改成 `blocked`，沒有進入「等待 approval」狀態。
-- `tasks.approved_by` 型別目前是 UUID，但 API 傳入字串，需修正。
+- v0.1 demo 使用固定 approver UUID；正式版本仍需從 auth claims 取得實際 user/role。
 
 建議狀態：
 

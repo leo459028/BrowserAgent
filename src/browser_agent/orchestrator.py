@@ -25,7 +25,7 @@ class Orchestrator:
             priority=payload.get("priority", 0),
             risk_level=payload.get("risk_level", "low"),
             status="created",
-            metadata=payload.get("metadata", {}),
+            metadata_=payload.get("metadata", {}),
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -34,7 +34,7 @@ class Orchestrator:
 
         policy = evaluate_task_policy({
             "risk_level": task.risk_level,
-            "metadata": task.metadata,
+            "metadata": task.metadata_,
             "instructions": task.instructions,
         })
         if not policy.allowed:
@@ -58,16 +58,22 @@ class Orchestrator:
         })
         return task
 
-    def approve_task(self, task: models.Task, approved_by: str, note: str | None) -> models.Approval:
-        approval = models.Approval(task_id=task.id, approved_by=approved_by, note=note)
-        task.approved_by = approved_by
+    def approve_task(
+        self,
+        task: models.Task,
+        approved_by_user_id: uuid.UUID,
+        approved_by_label: str,
+        note: str | None,
+    ) -> models.Approval:
+        approval = models.Approval(task_id=task.id, approved_by=approved_by_label, note=note)
+        task.approved_by = approved_by_user_id
         task.approved_at = datetime.now(timezone.utc)
         task.status = "approved"
         self.session.add(approval)
         self.session.add(task)
         self.session.add(models.AuditLog(
             tenant_id=task.tenant_id,
-            actor=approved_by,
+            actor=approved_by_label,
             action="task.approved",
             entity_type="task",
             entity_id=str(task.id),
@@ -79,7 +85,7 @@ class Orchestrator:
             "event_type": "task.approved",
             "task_id": str(task.id),
             "tenant_id": str(task.tenant_id),
-            "approved_by": approved_by,
+            "approved_by": approved_by_label,
             "note": note,
         })
         return approval

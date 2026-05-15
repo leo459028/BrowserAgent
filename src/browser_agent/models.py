@@ -56,11 +56,12 @@ class Task(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     correlation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     steps = relationship("TaskStep", back_populates="task", cascade="all, delete-orphan")
+    artifacts = relationship("TaskArtifact", back_populates="task", cascade="all, delete-orphan")
 
 class TaskStep(Base):
     __tablename__ = "task_steps"
@@ -88,8 +89,10 @@ class TaskArtifact(Base):
     artifact_type: Mapped[str] = mapped_column(Text, nullable=False)
     uri: Mapped[str] = mapped_column(Text, nullable=False)
     sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
-    metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    task = relationship("Task", back_populates="artifacts")
 
 class Evaluation(Base):
     __tablename__ = "evaluations"
