@@ -20,6 +20,8 @@ Production-grade scaffold for a Browser Agent platform built around:
 - Kafka-based orchestration
 - Browser runner worker
 - Artifact persistence
+- v0.2 lifecycle observability with pending approval, queued execution, failed task metadata, correlation IDs, metrics, audit coverage, and a local dashboard
+- v0.2 approval policy flow for high-risk and sensitive tasks
 - SQL schema and Alembic migration skeleton
 - Dockerized local stack
 - Minimal tests
@@ -27,7 +29,7 @@ Production-grade scaffold for a Browser Agent platform built around:
 ## Not included
 
 - LLM provider integration is abstracted behind an interface.
-- Human-in-the-loop UI is not implemented.
+- A production human-in-the-loop UI with auth/RBAC is not implemented. The local v0.2 Dashboard is included for testing and observation.
 - Kubernetes manifests are not included in this package.
 
 ## Architecture
@@ -60,7 +62,7 @@ Open:
 http://localhost:8000/demo
 ```
 
-Click **Run demo**. The console creates and approves an allowlisted `https://example.com` task, then shows the task status, evaluation result, browser steps, screenshot preview, and HTML artifact link.
+Use the v0.2 Dashboard to create allowlisted, high-risk, sensitive-instruction, or blocked-domain tasks. The dashboard can approve `pending_approval` tasks and shows task status, policy reason, metrics, audit timeline, evaluation result, browser steps, screenshot preview, and HTML artifact links.
 
 ### 4) Create a task manually
 
@@ -93,7 +95,7 @@ curl -X POST http://localhost:8000/v1/tasks/<TASK_ID>/approve \
 | postgres | System of record |
 | redis | Locks, dedupe, short-lived state |
 | kafka | Event stream |
-| minio | Artifact storage |
+| minio | Planned object storage; current artifact backend is local filesystem |
 
 ## Production notes
 
@@ -101,7 +103,7 @@ curl -X POST http://localhost:8000/v1/tasks/<TASK_ID>/approve \
 - Use per-tenant allowlists.
 - Store secrets in a vault, not in Postgres.
 - Keep browser sessions ephemeral.
-- Block login/payment flows by default.
+- Require approval or hard-block login/payment flows by policy.
 - Require approval for high-risk actions.
 
 ### Reliability
@@ -113,7 +115,7 @@ curl -X POST http://localhost:8000/v1/tasks/<TASK_ID>/approve \
 ### Observability
 - Structured JSON logs
 - Health endpoints
-- Metrics endpoint
+- Metrics endpoint. In Docker Compose, metrics are process-local, so API `/metrics` does not automatically aggregate worker counters.
 - Task-level audit trail
 
 ## Project layout
@@ -142,6 +144,6 @@ tests/
 
 1. Add SSO / OIDC.
 2. Add a real planner backed by your preferred LLM.
-3. Add per-action policy rules and approval UI.
+3. Add per-action policy rules and production approval UI with auth/RBAC.
 4. Add K8s manifests and HPA.
 5. Add replay UI for browser session artifacts.
