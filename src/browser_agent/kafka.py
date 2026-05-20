@@ -1,7 +1,6 @@
 import json
 import logging
 from dataclasses import dataclass
-from confluent_kafka import Producer, Consumer
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +10,8 @@ class KafkaConfig:
 
 class KafkaBus:
     def __init__(self, bootstrap_servers: str):
+        from confluent_kafka import Producer
+
         self.bootstrap_servers = bootstrap_servers
         self._producer = Producer({"bootstrap.servers": bootstrap_servers})
 
@@ -22,7 +23,9 @@ class KafkaBus:
         )
         self._producer.flush()
 
-    def consumer(self, group_id: str, topics: list[str]) -> Consumer:
+    def consumer(self, group_id: str, topics: list[str]):
+        from confluent_kafka import Consumer
+
         c = Consumer({
             "bootstrap.servers": self.bootstrap_servers,
             "group.id": group_id,

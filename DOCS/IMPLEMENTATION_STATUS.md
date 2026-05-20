@@ -1,92 +1,96 @@
 # Implementation Status
 
-更新日期：2026-05-20
+最後更新：2026-05-20
 
-## 目前完成狀態
+## 目前狀態
 
-這個 repo 目前完成到 v0.2 completion/stabilization。它仍是 production-grade
-scaffold，不是完整 production 產品，但 v0.2 需要的 lifecycle、approval policy、
-observability 與本機 Dashboard 已補齊。
+Repository 目前已實作到 v0.3。它仍是 production-grade scaffold，不是完整 production product。
 
-## 已實作
+已實作：
+
+- v0.2 task lifecycle、approval policy、observability、audit coverage、metrics、worker execution、本機 Dashboard。
+- v0.3 artifact governance：storage abstraction、local backend metadata、no-op redaction hook、tenant-scoped artifact access、governed artifact URL、Dashboard artifact query/testing UI。
+
+## 已實作 Components
 
 - FastAPI app factory 與 router。
-- `/healthz`, `/readyz`, `/metrics`。
-- `POST /v1/tasks` 建立 task。
-- `GET /v1/tasks` 列出最近 task summary。
-- `GET /v1/tasks/{task_id}` 讀取 task、steps、artifacts。
-- `GET /v1/tasks/{task_id}/audit` 讀取單一 task audit timeline。
-- `POST /v1/tasks/{task_id}/approve` 核准 task。
-- `POST /v1/skills`, `GET /v1/skills`。
+- `/healthz`、`/readyz`、`/metrics`。
+- `POST /v1/tasks`。
+- `GET /v1/tasks`。
+- `GET /v1/tasks/{task_id}`。
+- `GET /v1/tasks/{task_id}/audit`。
+- `POST /v1/tasks/{task_id}/approve`。
+- `GET /v1/artifacts/{artifact_id}/content`。
+- `POST /v1/skills`、`GET /v1/skills`。
 - SQLAlchemy ORM models。
 - SQL schema 與 Alembic initial migration skeleton。
 - Kafka producer/consumer wrapper。
 - Worker consumer loop。
-- Playwright browser runner 基本 action。
+- Playwright browser runner。
 - Heuristic planner。
-- Evaluator 基本評分。
-- Local artifact store。
+- Evaluator。
+- Local artifact store with governance metadata。
+- Artifact redaction hook interface 與 default no-op implementation。
 - JSON logging。
 - Docker Compose local stack。
-- `/demo` v0.2 Dashboard。
-- `task_artifacts` artifact 摘要回傳與安全內容讀取 endpoint。
-- Bootstrap script 建立 schema、seed demo tenant/user，並可建立 Kafka topics。
-- API 支援 `X-Correlation-ID`，並寫入 task、event 與 audit payload。
+- `/demo` v0.3 Dashboard。
+- Bootstrap script：schema、demo tenant/user、Kafka topics。
+- API 支援 `X-Correlation-ID`。
 
 ## v0.2 行為
 
-- allowlisted low/medium task 會進入 `pending_approval`。
-- `risk_level=high|critical` 會進入 `pending_approval`，不再永久 `blocked`。
-- sensitive instruction 會進入 `pending_approval`，例如 `login`, `password`, `payment`, `transfer`。
-- 非 allowlist domain 會進入 `blocked`。
-- prompt injection 類 instruction 會在 create task 階段回 400。
-- approval 後 task 會進入 `queued`。
-- Worker 只執行 `queued` task。
-- Worker 執行時 task 會進入 `executing`。
-- 成功後 task 會進入 `completed` 或 `review`。
-- 失敗後 task 會進入 `failed`，並保存 error metadata。
-- policy reason 會寫入 task metadata 與 audit payload。
-- 核心 task metrics 已接入 create/executed/failed/duration；目前 `/metrics` 是 process-local，Docker Compose 下 API 不會自動匯總 Worker metrics。
-- lifecycle audit 已覆蓋 created、pending approval、blocked、approved、queued、execution started、artifact written、evaluated、completed/review required、failed。
+- Allowlisted low/medium tasks 進入 `pending_approval`。
+- High/critical risk tasks 進入 `pending_approval`。
+- Sensitive instructions 進入 `pending_approval`。
+- Non-allowlisted domains 進入 `blocked`。
+- 類 prompt-injection instructions 以 `400` 拒絕。
+- Approval 將 task 移到 `queued`。
+- Worker 消費 `queued` tasks，並移到 `executing`。
+- Evaluation 成功時 task 變成 `completed`；較弱的 evaluation 變成 `review`。
+- Execution exceptions 會讓 task 變成 `failed`，並寫入 error metadata。
+- Lifecycle audit 覆蓋 created、pending approval、blocked、approved、queued、execution started、artifact written、evaluated、completed/review required、failed。
 
-## v0.2 Dashboard
+## v0.3 行為
 
-`GET /demo` 目前是本機 v0.2 Dashboard，可用來：
+- `ArtifactStore` protocol 定義 backend behavior。
+- `LocalArtifactStore` 寫入 artifacts，並回傳 SHA-256、content type、size、backend、retention、redaction metadata。
+- `NoopArtifactRedactor` 記錄 redaction hook status，但不修改 bytes。
+- `TaskRunner` 持久化 artifact governance metadata，並把它放入 artifact audit payloads。
+- `GET /v1/tasks/{task_id}` serialize artifact governance fields。
+- `GET /v1/artifacts/{artifact_id}/content` 會檢查 tenant 與 local storage base path 後才回傳 content。
+- `/demo` 顯示 artifact table、metadata JSON、preview/open links、access-check button。
 
-- 建立 allowlisted low-risk task。
-- 建立 high-risk task 並觀察 `pending_approval`。
-- 建立 sensitive instruction task 並觀察 `pending_approval`。
-- 建立 blocked-domain task 並觀察 `blocked`。
-- 核准 `pending_approval` task。
-- 查看最近 tasks。
-- 查看 status flow。
-- 查看 metrics。
-- 查看 audit timeline。
-- 查看 steps、evaluation、screenshot 與 HTML artifact。
+## v0.3 Dashboard
 
-## 尚未實作
+`GET /demo` 可以：
 
-- 正式登入、OIDC/JWT auth。
-- RBAC 與正式 approver role。
-- 正式多租戶 request context。
+- 建立 normal artifact task；
+- 建立 redaction metadata task；
+- 建立 high-risk 與 sensitive-instruction tasks；
+- 建立 blocked-domain tasks；
+- approve pending tasks；
+- 顯示 recent tasks、status flow、metrics、audit、steps、evaluation、artifacts；
+- 檢視 artifact content type、size、SHA、backend、redaction status、metadata；
+- 從 UI 測試 artifact content access。
+
+## 尚待實作
+
+- Formal OIDC/JWT auth 與 RBAC。
+- Request-scoped tenant/user context。
 - Planner output schema validation。
-- SkillHub resolver 與 planner/runner 整合。
-- Per-action policy/confirmation。
-- Redis locks/rate limiting/dedupe 的核心流程接入。
-- DLQ 與 poison message handling。
+- SkillHub resolver integration with planner/runner。
+- Per-action confirmation。
+- Redis locks/rate limiting/dedupe。
+- DLQ 與 poison message replay tooling。
 - Worker autoscaling。
-- MinIO/S3 artifact upload。
-- Artifact retention/redaction。
+- 完整 MinIO/S3 artifact backend。
 - Browser session replay UI。
 - Kubernetes manifests。
 - CI pipeline。
 - Production secret management。
 - Distributed tracing。
-- 跨 process metrics 匯總，或獨立 scrape Worker metrics endpoint。
+- Worker metrics endpoint 或 multiprocess metrics aggregation。
 
 ## 建議下一步
 
-1. 以 v0.3 開始 artifact 與治理補強。
-2. 抽象 artifact backend，加入 MinIO/S3。
-3. 補 artifact metadata、retention、redaction 與 access control。
-4. 等 v0.3 穩定後，再進 v0.4 Planner/SkillHub 整合。
+以獨立 implementation slice 開始 v0.4 Planner/SkillHub integration，並讓 v0.3 artifact governance 維持穩定底座。

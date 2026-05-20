@@ -133,10 +133,11 @@ def get_artifact_content(artifact_id: str, session: Session = Depends(get_sessio
     artifact = session.get(models.TaskArtifact, uuid.UUID(artifact_id))
     if not artifact:
         raise HTTPException(status_code=404, detail="artifact not found")
+    ensure_artifact_access(artifact, _tenant_id())
     settings = get_settings()
     path = resolve_artifact_file_path(settings.artifact_base_path, artifact.uri)
     metadata = artifact.metadata_ or {}
-    media_type = metadata.get("media_type") or "application/octet-stream"
+    media_type = metadata.get("content_type") or metadata.get("media_type") or "application/octet-stream"
     response = FileResponse(path, media_type=media_type, filename=path.name)
     response.headers["Content-Disposition"] = f'inline; filename="{path.name}"'
     return response
@@ -146,15 +147,7 @@ def serialize_task(task) -> dict:
     if metadata is None:
         metadata = getattr(task, "metadata", {})
     artifacts = [
-        {
-            "id": str(a.id),
-            "artifact_type": a.artifact_type,
-            "uri": a.uri,
-            "sha256": a.sha256,
-            "metadata": getattr(a, "metadata_", None) if getattr(a, "metadata_", None) is not None else getattr(a, "metadata", {}),
-            "created_at": a.created_at.isoformat(),
-            "download_url": f"/v1/artifacts/{a.id}/content",
-        }
+        serialize_artifact(a)
         for a in sorted(getattr(task, "artifacts", []), key=lambda x: x.created_at)
     ]
     return {
@@ -184,6 +177,28 @@ def serialize_task(task) -> dict:
             for s in sorted(task.steps, key=lambda x: x.step_no)
         ],
         "artifacts": artifacts,
+    }
+
+def serialize_artifact(artifact) -> dict:
+    metadata = getattr(artifact, "metadata_", None)
+    if metadata is None:
+        metadata = getattr(artifact, "metadata", {}) or {}
+    content_type = metadata.get("content_type") or metadata.get("media_type")
+    redaction = metadata.get("redaction") or {}
+    return {
+        "id": str(artifact.id),
+        "artifact_type": artifact.artifact_type,
+        "uri": artifact.uri,
+        "sha256": artifact.sha256,
+        "content_type": content_type,
+        "size_bytes": metadata.get("size_bytes"),
+        "backend": metadata.get("backend", "local"),
+        "retention": metadata.get("retention"),
+        "redaction": redaction,
+        "redaction_status": redaction.get("status"),
+        "metadata": metadata,
+        "created_at": artifact.created_at.isoformat(),
+        "download_url": f"/v1/artifacts/{artifact.id}/content",
     }
 
 def serialize_task_summary(task) -> dict:
@@ -226,6 +241,12 @@ def resolve_artifact_file_path(base_path: str, uri: str) -> Path:
     if not resolved.is_file():
         raise HTTPException(status_code=404, detail="artifact file not found")
     return resolved
+
+def ensure_artifact_access(artifact, tenant_id: uuid.UUID) -> None:
+    task = getattr(artifact, "task", None)
+    artifact_tenant_id = getattr(task, "tenant_id", None)
+    if artifact_tenant_id != tenant_id:
+        raise HTTPException(status_code=403, detail="artifact tenant mismatch")
 
 @router.post("/v1/tasks/{task_id}/approve")
 def approve_task(task_id: str, req: TaskApproveRequest, session: Session = Depends(get_session)):

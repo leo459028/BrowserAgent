@@ -9,4 +9,4 @@ description = "Enterprise Browser Agent platform scaffold"
 requires-python = ">=3.12"
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]

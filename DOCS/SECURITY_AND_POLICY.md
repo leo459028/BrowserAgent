@@ -2,8 +2,7 @@
 
 ## Instruction Scan
 
-`src/browser_agent/security.py` 會在建立 task 前檢查明顯 prompt injection 風險。
-目前會拒絕包含下列語意的 instructions，並讓 `POST /v1/tasks` 回 400：
+`src/browser_agent/security.py` 會在 `POST /v1/tasks` 時拒絕類 prompt-injection instructions。目前 patterns 包含：
 
 - `ignore previous instructions`
 - `reveal system prompt`
@@ -11,23 +10,23 @@
 - `bypass`
 - `steal`
 
+被拒絕的 requests 會回傳 `400`。
+
 ## Policy Engine
 
-`src/browser_agent/policy.py` 目前提供 v0.2 最小 policy decision：
+`src/browser_agent/policy.py` 提供目前 minimal policy decision：
 
-- 非 allowlist domain：`denied`，task 進入 `blocked`。
-- `risk_level=high|critical`：`requires_approval`，task 進入 `pending_approval`。
-- sensitive instruction，例如 `payment`, `transfer`, `wire`, `bank`, `password`, `mfa`, `otp`, `login`：`requires_approval`，task 進入 `pending_approval`。
-- allowlisted low/medium task：`allowed`，仍會進入 `pending_approval`，需人工核准後才進 worker queue。
+- non-allowlisted domain：`denied`，task 變成 `blocked`；
+- `risk_level=high|critical`：`requires_approval`，task 變成 `pending_approval`；
+- sensitive instruction，例如 `payment`、`transfer`、`wire`、`bank`、`password`、`mfa`、`otp`、`login`：`requires_approval`；
+- allowlisted low/medium task：`allowed`，但本機流程仍會進入 `pending_approval`，需要 human approval 後才 queue 給 worker。
 
-Policy reason 會寫入：
+Policy reason 會存放在：
 
-- `tasks.metadata.policy`
-- `audit_logs.payload.policy`
+- `tasks.metadata.policy`；
+- audit payloads。
 
 ## Approval Flow
-
-v0.2 的 approval flow：
 
 ```mermaid
 stateDiagram-v2
@@ -41,31 +40,41 @@ stateDiagram-v2
     executing --> failed
 ```
 
-目前 `/demo` Dashboard 可以觀察 allowlisted、high-risk、sensitive instruction 與
-blocked-domain task 的差異。
+v0.3 Dashboard 可以演練 normal artifact、high-risk、sensitive instruction、blocked-domain cases。
 
-## 已知限制
+## Artifact Access Control
 
-| 風險 | 現況 | 後續方向 |
+v0.3 加入 governed artifact reads：
+
+- artifact 必須存在；
+- artifact task tenant 必須符合目前 demo tenant；
+- local artifact path 必須 resolve 在 `ARTIFACT_BASE_PATH` 底下；
+- content type 來自 artifact metadata；
+- content 透過 `/v1/artifacts/{artifact_id}/content` inline serve。
+
+目前 redaction hook 是 no-op，會記錄：
+
+```json
+{"status": "not_applied", "strategy": "noop"}
+```
+
+## 目前風險
+
+| Risk | 目前 mitigation | Planned improvement |
 |---|---|---|
-| 無正式 auth/RBAC | demo 使用固定 tenant/user UUID | v0.5 導入 OIDC/JWT 與 RBAC |
-| 無 per-action confirmation | task approval 是任務層級 | 增加 action-level approval gate |
-| policy rules hardcoded | rules 寫在 Python code | policy-as-code 與 rule version audit |
-| artifact access control 還不完整 | 已有 base path 防護 | v0.3 補 tenant-scoped access control |
-| sandbox 仍是 container 內 Playwright | production 隔離不足 | gVisor/Kata/microVM |
+| 沒有正式 auth/RBAC | 固定 demo tenant/user UUID | v0.5 OIDC/JWT 與 RBAC |
+| 沒有 per-action confirmation | task-level approval gate | action-level confirmation |
+| Policy rules hardcoded | Python policy code 與 audit reason | policy-as-code 與 rule version audit |
+| 只有 local artifact backend | base-path 與 tenant checks | S3/MinIO backend 與 signed URLs |
+| Browser isolation 只有 container | Docker + Playwright | gVisor/Kata/microVM |
 
-## Audit 建議欄位
+## Audit Fields 應保留
 
-每個可稽核事件應盡量保留：
-
-- task created payload hash
-- policy decision 與 reason
-- approval actor/time/note
-- planner version 與 generated plan
-- browser action log
-- artifact URI 與 checksum
-- evaluator version 與 checks
-- final status 與 error metadata
-
-v0.2 已寫入最小 lifecycle audit；後續仍可補 per-step audit、policy version 與 rule ID。
-
+- task creation payload 或 hash；
+- policy decision 與 reason；
+- approval actor/time/note；
+- planner version 與 generated plan，等 v0.4 落地後加入；
+- browser action log；
+- artifact URI、checksum、content type、size、backend、redaction metadata；
+- evaluator version 與 checks；
+- final status 與 error metadata。
