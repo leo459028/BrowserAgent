@@ -1,21 +1,29 @@
-# API 說明
+# API
 
-Base URL：`http://localhost:8000`
+Base URL: `http://localhost:8000`
 
-API 由 `src/browser_agent/api.py` 定義，目前沒有 auth middleware。所有任務會使用程式內固定 tenant/user UUID：
+目前 v0.2 仍使用 demo tenant/user，尚未接正式 auth middleware。
 
-- tenant：`00000000-0000-0000-0000-000000000001`
-- actor：`00000000-0000-0000-0000-000000000002`
+- tenant: `00000000-0000-0000-0000-000000000001`
+- actor: `00000000-0000-0000-0000-000000000002`
+- approver label: `ops@example.com`
 
-如果資料庫沒有對應 tenant/user seed，建立 task 會因 foreign key 失敗。
-
-## Health
-
-## Demo UI
+## Dashboard
 
 ### `GET /demo`
 
-本機 v0.1 demo console。頁面內建 `https://example.com` allowlisted task payload，可一鍵建立任務、核准任務、輪詢狀態，並顯示 evaluation、steps、screenshot preview 與 HTML artifact 連結。
+開啟本機 v0.2 Dashboard。Dashboard 可用來建立不同任務情境、核准
+`pending_approval` 任務、觀察 lifecycle status、查看 metrics、audit timeline、
+steps、evaluation、screenshot 與 HTML artifact。
+
+內建情境包含：
+
+- allowlisted low-risk task
+- high-risk task
+- sensitive instruction task
+- blocked-domain task
+
+## Health 與 Metrics
 
 ### `GET /healthz`
 
@@ -27,7 +35,7 @@ API 由 `src/browser_agent/api.py` 定義，目前沒有 auth middleware。所�
 
 ### `GET /readyz`
 
-會執行 `select(1)` 檢查資料庫連線。
+執行 `select(1)` 檢查資料庫連線。
 
 ```json
 {"status":"ready"}
@@ -35,15 +43,23 @@ API 由 `src/browser_agent/api.py` 定義，目前沒有 auth middleware。所�
 
 ### `GET /metrics`
 
-回傳 Prometheus exposition format。注意：目前 `metrics.py` 定義的 task counters 尚未在流程中遞增，因此 metrics 主要是 Python process/default metrics。
+回傳 API process 的 Prometheus exposition format。v0.2 核心流程已接上：
+
+- `browser_agent_tasks_created_total`
+- `browser_agent_tasks_executed_total`
+- `browser_agent_tasks_failed_total`
+- `browser_agent_task_duration_seconds`
+
+注意：在 Docker Compose 中 API 與 Worker 是不同 process，API 的 `/metrics` 不會自動匯總 Worker process 裡的 executed/failed/duration metrics。
 
 ## Tasks
 
 ### `POST /v1/tasks`
 
-建立任務並發布 `agent.tasks.created` Kafka event。
+建立任務並發布 `agent.tasks.created` Kafka event。可傳入 `X-Correlation-ID`
+header；若未提供，API 會產生 UUID 並寫入 task、event 與 audit payload。
 
-Request：
+Request:
 
 ```json
 {
@@ -59,64 +75,95 @@ Request：
 }
 ```
 
-Response：
+Response:
 
 ```json
 {
   "task_id": "uuid",
-  "status": "created",
+  "status": "pending_approval",
+  "correlation_id": "uuid-or-client-provided-id",
   "created_at": "2026-05-15T..."
 }
 ```
 
 Policy 行為：
 
-- `risk_level` 為 `high` 或 `critical` 會被標記為 `blocked`。
-- `metadata.domains` 只允許出現在 `ALLOWLIST_DOMAINS` 的 domain。
-- instructions 包含 `payment`, `transfer`, `wire`, `bank`, `password`, `mfa`, `otp`, `login` 會被阻擋。
-- instructions 包含 prompt injection 風險字串會直接回 400。
+- allowlisted low/medium task 會進入 `pending_approval`。
+- `risk_level=high|critical` 會進入 `pending_approval`，並在 metadata/audit 記錄 policy reason。
+- instructions 包含 `payment`, `transfer`, `wire`, `bank`, `password`, `mfa`, `otp`, `login` 會進入 `pending_approval`，並記錄 sensitive action reason。
+- 非 allowlist domain 會進入 `blocked`。
+- prompt injection 類 instruction 會被 request validation 擋下並回 400。
 
-範例：
+### `GET /v1/tasks`
 
-```powershell
-curl.exe -X POST http://localhost:8000/v1/tasks `
-  -H "Content-Type: application/json" `
-  -d "{\"title\":\"Collect pricing\",\"instructions\":\"Open the allowlisted site and capture a screenshot.\",\"priority\":5,\"risk_level\":\"medium\",\"metadata\":{\"domains\":[\"example.com\"],\"start_url\":\"https://example.com\",\"expected_domain\":\"example.com\"}}"
+回傳最近任務摘要，供 Dashboard 顯示任務列表。
+
+Query:
+
+- `limit`: optional，預設 `20`，範圍 `1..100`
+
+Response:
+
+```json
+[
+  {
+    "id": "uuid",
+    "title": "High risk review",
+    "status": "pending_approval",
+    "correlation_id": "cid-list",
+    "priority": 3,
+    "risk_level": "high",
+    "policy": {
+      "decision": "requires_approval",
+      "reason": "high-risk task requires manual approval",
+      "requires_approval": true
+    },
+    "created_at": "2026-05-15T...",
+    "updated_at": "2026-05-15T..."
+  }
+]
 ```
 
 ### `GET /v1/tasks/{task_id}`
 
-讀取任務與 task steps。
+讀取單一 task 詳情，包含 metadata、steps 與 artifacts。
 
-Response 欄位：
+Response 主要欄位：
 
 - `id`, `tenant_id`, `title`, `instructions`
-- `status`, `priority`, `risk_level`
+- `status`, `correlation_id`, `priority`, `risk_level`
 - `metadata`
 - `created_at`, `updated_at`
 - `steps[]`
+- `artifacts[]`
 
-`steps[]` 由 `TaskRunner` 根據 planner output 建立，目前 step 狀態不會在每一步完成後更新。
+### `GET /v1/tasks/{task_id}/audit`
 
-`artifacts[]` 會回傳已寫入 `task_artifacts` 的 artifact 摘要，包含：
+回傳單一 task 的 audit timeline，供 Dashboard 顯示 lifecycle events。
 
-- `id`
-- `artifact_type`
-- `uri`
-- `sha256`
-- `metadata`
-- `created_at`
-- `download_url`
+Response:
 
-### `GET /v1/artifacts/{artifact_id}/content`
-
-讀取 screenshot 或 HTML artifact。API 只允許讀取 `ARTIFACT_BASE_PATH` 底下的檔案；若 artifact URI 指向 base path 外部，會回 403。
+```json
+[
+  {
+    "id": "uuid",
+    "actor": "ops@example.com",
+    "action": "task.pending_approval",
+    "payload": {
+      "reason": "high-risk task requires manual approval"
+    },
+    "created_at": "2026-05-15T..."
+  }
+]
+```
 
 ### `POST /v1/tasks/{task_id}/approve`
 
-核准任務並發布 `agent.tasks.approved` Kafka event。
+核准 `pending_approval` 或舊資料中的 `created` 任務。成功後狀態改為
+`queued`，並發布 `agent.tasks.queued` Kafka event。若 task 已經
+`blocked/completed/failed`，會回 409。
 
-Request：
+Request:
 
 ```json
 {
@@ -125,17 +172,21 @@ Request：
 }
 ```
 
-Response：
+Response:
 
 ```json
 {
   "task_id": "uuid",
   "approval_id": "uuid",
-  "status": "approved"
+  "status": "queued",
+  "correlation_id": "uuid-or-client-provided-id"
 }
 ```
 
-注意：v0.1 demo 仍未實作正式登入。API 會把 `tasks.approved_by` 寫成固定 demo user UUID，並把 request 內的 `approved_by` 字串保存在 `approvals.approved_by` 作為顯示與稽核用 label。
+### `GET /v1/artifacts/{artifact_id}/content`
+
+讀取 screenshot 或 HTML artifact。API 會確認 artifact path 位於
+`ARTIFACT_BASE_PATH` 內；若不在 base path 內會回 403。
 
 ## Skills
 
@@ -143,59 +194,6 @@ Response：
 
 註冊 skill。
 
-Request：
-
-```json
-{
-  "name": "browser.open_url",
-  "version": "1.0.0",
-  "description": "Open a URL in the browser runner",
-  "skill_type": "browser",
-  "entrypoint": "browser_agent.services.browser:BrowserRunner",
-  "input_schema": {
-    "type": "object",
-    "properties": {
-      "url": {"type": "string"}
-    },
-    "required": ["url"]
-  },
-  "output_schema": {
-    "type": "object",
-    "properties": {
-      "final_url": {"type": "string"}
-    }
-  },
-  "policy_tags": ["network", "browser"]
-}
-```
-
-Response：
-
-```json
-{
-  "skill_id": "uuid",
-  "name": "browser.open_url",
-  "version": "1.0.0",
-  "status": "created"
-}
-```
-
 ### `GET /v1/skills`
 
-列出 skill registry。
-
-Response：
-
-```json
-[
-  {
-    "id": "uuid",
-    "name": "browser.open_url",
-    "version": "1.0.0",
-    "description": "Open a URL in the browser runner",
-    "skill_type": "browser",
-    "entrypoint": "browser_agent.services.browser:BrowserRunner",
-    "is_active": true
-  }
-]
-```
+列出已註冊 skill。
