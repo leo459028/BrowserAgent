@@ -74,13 +74,17 @@ def demo(request: Request):
         },
     )
 
+def _correlation_id(request: Request) -> str:
+    return request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+
 @router.post("/v1/tasks")
-def create_task(req: TaskCreateRequest, session: Session = Depends(get_session)):
+def create_task(req: TaskCreateRequest, request: Request, session: Session = Depends(get_session)):
     settings = get_settings()
     bus = get_bus(settings.kafka_bootstrap_servers)
     orch = Orchestrator(session, bus)
+    correlation_id = _correlation_id(request)
     try:
-        task = orch.create_task(_tenant_id(), _actor(), req.model_dump())
+        task = orch.create_task(_tenant_id(), _actor(), req.model_dump(), correlation_id=correlation_id)
         session.commit()
     except ValueError as exc:
         session.rollback()
@@ -88,8 +92,20 @@ def create_task(req: TaskCreateRequest, session: Session = Depends(get_session))
     return {
         "task_id": str(task.id),
         "status": task.status,
+        "correlation_id": getattr(task, "correlation_id", None),
         "created_at": task.created_at.isoformat(),
     }
+
+@router.get("/v1/tasks")
+def list_tasks(limit: int = 20, session: Session = Depends(get_session)):
+    limit = max(1, min(limit, 100))
+    tasks = session.execute(
+        select(models.Task)
+        .where(models.Task.tenant_id == _tenant_id())
+        .order_by(models.Task.created_at.desc())
+        .limit(limit)
+    ).scalars().all()
+    return [serialize_task_summary(task) for task in tasks]
 
 @router.get("/v1/tasks/{task_id}")
 def get_task(task_id: str, session: Session = Depends(get_session)):
@@ -97,6 +113,20 @@ def get_task(task_id: str, session: Session = Depends(get_session)):
     if not task:
         raise HTTPException(status_code=404, detail="task not found")
     return serialize_task(task)
+
+@router.get("/v1/tasks/{task_id}/audit")
+def get_task_audit(task_id: str, session: Session = Depends(get_session)):
+    task_uuid = uuid.UUID(task_id)
+    entries = session.execute(
+        select(models.AuditLog)
+        .where(
+            models.AuditLog.entity_type == "task",
+            models.AuditLog.entity_id == str(task_uuid),
+            models.AuditLog.tenant_id == _tenant_id(),
+        )
+        .order_by(models.AuditLog.created_at.asc())
+    ).scalars().all()
+    return [serialize_audit_log(entry) for entry in entries]
 
 @router.get("/v1/artifacts/{artifact_id}/content")
 def get_artifact_content(artifact_id: str, session: Session = Depends(get_session)):
@@ -133,6 +163,7 @@ def serialize_task(task) -> dict:
         "title": task.title,
         "instructions": task.instructions,
         "status": task.status,
+        "correlation_id": getattr(task, "correlation_id", None),
         "priority": task.priority,
         "risk_level": task.risk_level,
         "metadata": metadata,
@@ -153,6 +184,31 @@ def serialize_task(task) -> dict:
             for s in sorted(task.steps, key=lambda x: x.step_no)
         ],
         "artifacts": artifacts,
+    }
+
+def serialize_task_summary(task) -> dict:
+    metadata = getattr(task, "metadata_", None)
+    if metadata is None:
+        metadata = getattr(task, "metadata", {})
+    return {
+        "id": str(task.id),
+        "title": task.title,
+        "status": task.status,
+        "correlation_id": getattr(task, "correlation_id", None),
+        "priority": task.priority,
+        "risk_level": task.risk_level,
+        "policy": (metadata or {}).get("policy"),
+        "created_at": task.created_at.isoformat(),
+        "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+    }
+
+def serialize_audit_log(entry) -> dict:
+    return {
+        "id": str(entry.id),
+        "actor": entry.actor,
+        "action": entry.action,
+        "payload": entry.payload,
+        "created_at": entry.created_at.isoformat(),
     }
 
 def resolve_artifact_file_path(base_path: str, uri: str) -> Path:
@@ -179,12 +235,17 @@ def approve_task(task_id: str, req: TaskApproveRequest, session: Session = Depen
     task = session.get(models.Task, uuid.UUID(task_id))
     if not task:
         raise HTTPException(status_code=404, detail="task not found")
-    approval = orch.approve_task(task, _actor(), req.approved_by, req.note)
-    session.commit()
+    try:
+        approval = orch.approve_task(task, _actor(), req.approved_by, req.note)
+        session.commit()
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
     return {
         "task_id": str(task.id),
         "approval_id": str(approval.id),
         "status": task.status,
+        "correlation_id": task.correlation_id,
     }
 
 @router.post("/v1/skills")

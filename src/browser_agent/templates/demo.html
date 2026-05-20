@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Browser Agent Demo</title>
+  <title>Browser Agent v0.2 Dashboard</title>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f7f9;
+      --bg: #f5f7fa;
       --panel: #ffffff;
-      --panel-soft: #eef2f7;
+      --panel-soft: #eef3f8;
       --text: #17202a;
-      --muted: #637083;
-      --line: #d8dee8;
+      --muted: #627084;
+      --line: #d7dee8;
       --accent: #116a63;
       --accent-strong: #0b4f4a;
       --danger: #b42318;
@@ -29,7 +29,7 @@
       line-height: 1.5;
     }
     main {
-      width: min(1180px, calc(100vw - 32px));
+      width: min(1280px, calc(100vw - 32px));
       margin: 0 auto;
       padding: 24px 0 40px;
     }
@@ -43,7 +43,7 @@
     h1 {
       margin: 0;
       font-size: 24px;
-      font-weight: 700;
+      font-weight: 750;
       letter-spacing: 0;
     }
     h2 {
@@ -51,18 +51,21 @@
       font-size: 16px;
       letter-spacing: 0;
     }
-    .toolbar {
+    .toolbar, .button-row {
       display: flex;
       gap: 10px;
       align-items: center;
       flex-wrap: wrap;
     }
-    button {
+    button, select {
       min-height: 38px;
+      border-radius: 6px;
+      font: inherit;
+    }
+    button {
       border: 1px solid var(--accent);
       background: var(--accent);
       color: white;
-      border-radius: 6px;
       padding: 0 14px;
       font-weight: 650;
       cursor: pointer;
@@ -71,17 +74,28 @@
       background: white;
       color: var(--accent);
     }
+    button.danger {
+      border-color: var(--danger);
+      background: var(--danger);
+    }
     button:disabled {
       cursor: not-allowed;
       opacity: 0.58;
     }
-    .grid {
+    select {
+      border: 1px solid var(--line);
+      background: white;
+      color: var(--text);
+      padding: 0 10px;
+      min-width: 220px;
+    }
+    .layout {
       display: grid;
-      grid-template-columns: minmax(280px, 0.8fr) minmax(420px, 1.2fr);
+      grid-template-columns: minmax(300px, 0.9fr) minmax(460px, 1.4fr);
       gap: 16px;
       align-items: start;
     }
-    section, .card {
+    section {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -90,7 +104,7 @@
     .stack { display: grid; gap: 16px; }
     .kv {
       display: grid;
-      grid-template-columns: 120px minmax(0, 1fr);
+      grid-template-columns: 126px minmax(0, 1fr);
       gap: 8px 12px;
       align-items: start;
     }
@@ -114,8 +128,27 @@
       font-size: 12px;
     }
     .status.completed, .status.ready, .status.pass { color: var(--ok); background: #e7f7ed; }
-    .status.review, .status.warn, .status.executing, .status.approved { color: var(--warn); background: #fff4db; }
+    .status.review, .status.warn, .status.executing, .status.pending_approval, .status.queued, .status.creating { color: var(--warn); background: #fff4db; }
     .status.failed, .status.error, .status.blocked { color: var(--danger); background: #fde8e5; }
+    .flow {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .flow span {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+      color: var(--muted);
+      font-size: 12px;
+      background: white;
+    }
+    .flow span.active {
+      border-color: var(--accent);
+      color: var(--accent-strong);
+      font-weight: 700;
+      background: #e6f4f1;
+    }
     pre {
       margin: 0;
       white-space: pre-wrap;
@@ -140,10 +173,11 @@
       vertical-align: top;
     }
     th { color: var(--muted); font-weight: 650; }
+    tr.selected { background: #edf7f5; }
     img.preview {
       display: block;
       width: 100%;
-      max-height: 520px;
+      max-height: 440px;
       object-fit: contain;
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -151,11 +185,11 @@
     }
     a { color: var(--accent-strong); font-weight: 650; }
     .muted { color: var(--muted); }
-    .hidden { display: none; }
-    @media (max-width: 860px) {
+    .error-text { color: var(--danger); font-weight: 650; }
+    @media (max-width: 900px) {
       header { align-items: stretch; flex-direction: column; }
-      .grid { grid-template-columns: 1fr; }
-      .kv { grid-template-columns: 92px minmax(0, 1fr); }
+      .layout { grid-template-columns: 1fr; }
+      .kv { grid-template-columns: 104px minmax(0, 1fr); }
     }
   </style>
 </head>
@@ -163,17 +197,27 @@
   <main>
     <header>
       <div>
-        <h1>Browser Agent Demo</h1>
-        <div class="muted">Local v0.1 console for the allowlisted example.com task.</div>
+        <h1>Browser Agent v0.2 Dashboard</h1>
+        <div class="muted">Local dashboard for lifecycle, approval, metrics, audit, and artifacts.</div>
       </div>
       <div class="toolbar">
-        <button id="run-demo">Run demo</button>
-        <button id="refresh" class="secondary" disabled>Refresh</button>
+        <button id="refresh" class="secondary">Refresh</button>
+        <button id="approve" disabled>Approve selected</button>
       </div>
     </header>
 
-    <div class="grid">
+    <div class="layout">
       <div class="stack">
+        <section>
+          <h2>Create Task</h2>
+          <div class="button-row">
+            <select id="scenario"></select>
+            <button id="create-task">Create task</button>
+          </div>
+          <p id="scenario-help" class="muted"></p>
+          <pre id="payload"></pre>
+        </section>
+
         <section>
           <h2>Runtime</h2>
           <div class="kv">
@@ -185,26 +229,43 @@
         </section>
 
         <section>
-          <h2>Task</h2>
-          <div class="kv">
-            <div class="label">Task ID</div><div id="task-id" class="value">-</div>
-            <div class="label">Status</div><div><span id="task-status" class="status">idle</span></div>
-            <div class="label">Final URL</div><div id="final-url" class="value">-</div>
-            <div class="label">Title</div><div id="page-title" class="value">-</div>
-            <div class="label">Score</div><div id="score" class="value">-</div>
-          </div>
+          <h2>Metrics</h2>
+          <pre id="metrics">Loading metrics...</pre>
         </section>
 
         <section>
-          <h2>Payload</h2>
-          <pre id="payload"></pre>
+          <h2>Recent Tasks</h2>
+          <div id="task-list" class="muted">No tasks loaded.</div>
         </section>
       </div>
 
       <div class="stack">
         <section>
+          <h2>Task Detail</h2>
+          <div class="kv">
+            <div class="label">Task ID</div><div id="task-id" class="value">-</div>
+            <div class="label">Status</div><div><span id="task-status" class="status">idle</span></div>
+            <div class="label">Risk</div><div id="risk-level" class="value">-</div>
+            <div class="label">Correlation</div><div id="correlation-id" class="value">-</div>
+            <div class="label">Policy</div><div id="policy-reason" class="value">-</div>
+            <div class="label">Final URL</div><div id="final-url" class="value">-</div>
+            <div class="label">Score</div><div id="score" class="value">-</div>
+          </div>
+        </section>
+
+        <section>
+          <h2>Status Flow</h2>
+          <div id="status-flow" class="flow"></div>
+        </section>
+
+        <section>
+          <h2>Audit Timeline</h2>
+          <div id="audit" class="muted">Select a task to inspect audit events.</div>
+        </section>
+
+        <section>
           <h2>Artifacts</h2>
-          <div id="artifacts" class="muted">Run the demo to produce screenshot and HTML artifacts.</div>
+          <div id="artifacts" class="muted">Select or run a task to inspect artifacts.</div>
         </section>
 
         <section>
@@ -221,13 +282,60 @@
   </main>
 
   <script>
-    const payload = {{ demo_payload | tojson }};
     const actor = {{ demo_actor | tojson }};
+    const defaultPayload = {{ demo_payload | tojson }};
+    const statuses = ["created", "pending_approval", "queued", "executing", "completed", "review", "failed", "blocked"];
+    const scenarios = {
+      allowlisted: {
+        label: "Allowlisted low-risk task",
+        help: "Expected: pending_approval, then queued after approval, then worker execution.",
+        payload: defaultPayload,
+      },
+      highRisk: {
+        label: "High-risk task",
+        help: "Expected: pending_approval with policy reason instead of permanent blocked.",
+        payload: {
+          ...defaultPayload,
+          title: "Review high-risk browser task",
+          risk_level: "high",
+        },
+      },
+      sensitive: {
+        label: "Sensitive instruction task",
+        help: "Expected: pending_approval because login/password/payment-like instructions need review.",
+        payload: {
+          ...defaultPayload,
+          title: "Review sensitive browser task",
+          instructions: "Open the allowlisted site and login to check account status.",
+          risk_level: "medium",
+        },
+      },
+      blockedDomain: {
+        label: "Blocked-domain task",
+        help: "Expected: blocked because the domain is not allowlisted.",
+        payload: {
+          ...defaultPayload,
+          title: "Blocked domain task",
+          metadata: {
+            domains: ["evil.com"],
+            start_url: "https://evil.com",
+            expected_domain: "evil.com",
+          },
+        },
+      },
+    };
     let currentTaskId = null;
     let pollTimer = null;
 
     const $ = (id) => document.getElementById(id);
-    $("payload").textContent = JSON.stringify(payload, null, 2);
+
+    function clone(value) {
+      return JSON.parse(JSON.stringify(value));
+    }
+
+    function currentPayload() {
+      return clone(scenarios[$("scenario").value].payload);
+    }
 
     function setStatus(id, value) {
       const el = $(id);
@@ -242,6 +350,27 @@
         throw new Error(`${response.status} ${response.statusText}: ${text}`);
       }
       return response.json();
+    }
+
+    async function getText(url) {
+      const response = await fetch(url);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`${response.status} ${response.statusText}: ${text}`);
+      }
+      return response.text();
+    }
+
+    function renderScenario() {
+      const scenario = scenarios[$("scenario").value];
+      $("scenario-help").textContent = scenario.help;
+      $("payload").textContent = JSON.stringify(scenario.payload, null, 2);
+    }
+
+    function renderStatusFlow(activeStatus) {
+      $("status-flow").innerHTML = statuses
+        .map((status) => `<span class="${status === activeStatus ? "active" : ""}">${status}</span>`)
+        .join("");
     }
 
     async function checkRuntime() {
@@ -259,32 +388,62 @@
       }
     }
 
-    async function runDemo() {
-      $("run-demo").disabled = true;
-      $("refresh").disabled = true;
+    async function refreshMetrics() {
+      try {
+        $("metrics").textContent = await getText("/metrics");
+      } catch (error) {
+        $("metrics").textContent = error.message;
+      }
+    }
+
+    async function refreshTasks() {
+      try {
+        const tasks = await getJson("/v1/tasks?limit=20");
+        renderTaskList(tasks);
+        if (!currentTaskId && tasks.length) {
+          currentTaskId = tasks[0].id;
+          await refreshTask();
+        }
+      } catch (error) {
+        $("task-list").innerHTML = `<span class="error-text">${escapeHtml(error.message)}</span>`;
+      }
+    }
+
+    async function createTask() {
+      $("create-task").disabled = true;
       setStatus("task-status", "creating");
       try {
         const created = await getJson("/v1/tasks", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify(payload),
+          body: JSON.stringify(currentPayload()),
         });
         currentTaskId = created.task_id;
-        $("task-id").textContent = currentTaskId;
-        setStatus("task-status", created.status);
-
-        await getJson(`/v1/tasks/${currentTaskId}/approve`, {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({approved_by: actor, note: "Approved from local demo console"}),
-        });
-        $("refresh").disabled = false;
+        await refreshAll();
         await refreshTask();
         startPolling();
       } catch (error) {
         setStatus("task-status", "error");
         $("evaluation").textContent = error.message;
-        $("run-demo").disabled = false;
+      } finally {
+        $("create-task").disabled = false;
+      }
+    }
+
+    async function approveSelected() {
+      if (!currentTaskId) return;
+      $("approve").disabled = true;
+      try {
+        await getJson(`/v1/tasks/${currentTaskId}/approve`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({approved_by: actor, note: "Approved from local v0.2 dashboard"}),
+        });
+        await refreshTask();
+        await refreshTasks();
+        startPolling();
+      } catch (error) {
+        $("evaluation").textContent = error.message;
       }
     }
 
@@ -297,20 +456,77 @@
       if (!currentTaskId) return;
       const task = await getJson(`/v1/tasks/${currentTaskId}`);
       renderTask(task);
+      await refreshAudit();
+      await refreshMetrics();
       if (["completed", "review", "failed", "blocked"].includes(task.status)) {
         clearInterval(pollTimer);
-        $("run-demo").disabled = false;
       }
+    }
+
+    async function refreshAudit() {
+      if (!currentTaskId) return;
+      try {
+        const entries = await getJson(`/v1/tasks/${currentTaskId}/audit`);
+        renderAudit(entries);
+      } catch (error) {
+        $("audit").innerHTML = `<span class="error-text">${escapeHtml(error.message)}</span>`;
+      }
+    }
+
+    async function refreshAll() {
+      await Promise.all([checkRuntime(), refreshMetrics(), refreshTasks()]);
     }
 
     function renderTask(task) {
       setStatus("task-status", task.status);
+      $("task-id").textContent = task.id;
+      $("risk-level").textContent = task.risk_level;
+      $("correlation-id").textContent = task.correlation_id || "-";
+      $("policy-reason").textContent = task.metadata?.policy?.reason || "-";
       $("final-url").textContent = task.metadata?.browser_result?.final_url || "-";
-      $("page-title").textContent = task.metadata?.browser_result?.title || "-";
       $("score").textContent = task.metadata?.evaluation?.score ?? "-";
       $("evaluation").textContent = JSON.stringify(task.metadata?.evaluation || {}, null, 2);
+      $("approve").disabled = task.status !== "pending_approval";
+      renderStatusFlow(task.status);
       renderSteps(task.steps || []);
       renderArtifacts(task.artifacts || []);
+      refreshTasks();
+    }
+
+    function renderTaskList(tasks) {
+      if (!tasks.length) {
+        $("task-list").innerHTML = '<span class="muted">No tasks yet.</span>';
+        return;
+      }
+      $("task-list").innerHTML = `<table><thead><tr><th>Created</th><th>Title</th><th>Status</th><th>Risk</th></tr></thead><tbody>${tasks.map((task) => `
+        <tr class="${task.id === currentTaskId ? "selected" : ""}" data-task-id="${task.id}">
+          <td>${escapeHtml(new Date(task.created_at).toLocaleTimeString())}</td>
+          <td>${escapeHtml(task.title)}</td>
+          <td><span class="status ${escapeHtml(task.status)}">${escapeHtml(task.status)}</span></td>
+          <td>${escapeHtml(task.risk_level)}</td>
+        </tr>
+      `).join("")}</tbody></table>`;
+      $("task-list").querySelectorAll("tr[data-task-id]").forEach((row) => {
+        row.addEventListener("click", async () => {
+          currentTaskId = row.dataset.taskId;
+          await refreshTask();
+        });
+      });
+    }
+
+    function renderAudit(entries) {
+      if (!entries.length) {
+        $("audit").innerHTML = '<span class="muted">No audit events yet.</span>';
+        return;
+      }
+      $("audit").innerHTML = `<table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Payload</th></tr></thead><tbody>${entries.map((entry) => `
+        <tr>
+          <td>${escapeHtml(new Date(entry.created_at).toLocaleTimeString())}</td>
+          <td>${escapeHtml(entry.action)}</td>
+          <td>${escapeHtml(entry.actor || "-")}</td>
+          <td><pre>${escapeHtml(JSON.stringify(entry.payload || {}, null, 2))}</pre></td>
+        </tr>
+      `).join("")}</tbody></table>`;
     }
 
     function renderSteps(steps) {
@@ -336,7 +552,7 @@
       const screenshot = artifacts.find((artifact) => artifact.artifact_type === "screenshot");
       const links = artifacts.map((artifact) =>
         `<a href="${artifact.download_url}" target="_blank" rel="noreferrer">${escapeHtml(artifact.artifact_type)}</a>`
-      ).join(" · ");
+      ).join(" ");
       $("artifacts").innerHTML = `
         ${screenshot ? `<img class="preview" src="${screenshot.download_url}" alt="Browser screenshot artifact">` : ""}
         <p>${links}</p>
@@ -352,9 +568,19 @@
         .replaceAll("'", "&#039;");
     }
 
-    $("run-demo").addEventListener("click", runDemo);
-    $("refresh").addEventListener("click", refreshTask);
-    checkRuntime();
+    Object.entries(scenarios).forEach(([value, scenario]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = scenario.label;
+      $("scenario").append(option);
+    });
+    $("scenario").addEventListener("change", renderScenario);
+    $("create-task").addEventListener("click", createTask);
+    $("approve").addEventListener("click", approveSelected);
+    $("refresh").addEventListener("click", refreshAll);
+    renderScenario();
+    renderStatusFlow("idle");
+    refreshAll();
   </script>
 </body>
 </html>

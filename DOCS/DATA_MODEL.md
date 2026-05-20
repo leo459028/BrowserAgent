@@ -1,6 +1,7 @@
-# 資料模型
+# Data Model
 
-資料模型由 `sql/schema.sql` 與 `src/browser_agent/models.py` 定義，Alembic migration `0001_initial.py` 會讀取 `sql/schema.sql` 並逐句執行。
+資料模型由 `sql/schema.sql`、`src/browser_agent/models.py` 與 Alembic initial migration
+描述。v0.2 實作以 SQLAlchemy ORM 為主要來源。
 
 ## ERD
 
@@ -13,113 +14,102 @@ erDiagram
     users ||--o{ skills : creates
     tasks ||--o{ task_steps : has
     tasks ||--o{ task_artifacts : produces
-    task_steps ||--o{ task_artifacts : references
     tasks ||--o{ evaluations : evaluated_by
     tasks ||--o{ approvals : approved_by
-
-    tenants {
-      uuid id PK
-      text name
-      text status
-      timestamptz created_at
-    }
-
-    users {
-      uuid id PK
-      uuid tenant_id FK
-      text email
-      text role
-      timestamptz created_at
-    }
-
-    tasks {
-      uuid id PK
-      uuid tenant_id FK
-      uuid created_by FK
-      text title
-      text instructions
-      text status
-      int priority
-      text risk_level
-      uuid approved_by FK
-      jsonb metadata
-    }
-
-    task_steps {
-      uuid id PK
-      uuid task_id FK
-      int step_no
-      text action_type
-      text target
-      text status
-      jsonb input_data
-      jsonb output_data
-    }
-
-    skills {
-      uuid id PK
-      uuid tenant_id FK
-      text name
-      text version
-      text skill_type
-      text entrypoint
-      jsonb input_schema
-      jsonb output_schema
-      text_array policy_tags
-    }
 ```
 
-## 主要資料表
+## Main Tables
 
 ### `tenants`
 
-租戶主檔。目前 API 沒有從 request/auth 判定 tenant，而是使用固定 UUID。
+租戶主檔。目前 API 尚未從 request/auth 判定 tenant，而是使用固定 demo UUID：
+`00000000-0000-0000-0000-000000000001`。
 
 ### `users`
 
-使用者主檔。目前 API 沒有登入流程，`created_by` 使用固定 UUID。
+使用者主檔。目前 API 尚未實作正式登入，`created_by` 與 `approved_by` 使用固定
+demo user UUID：`00000000-0000-0000-0000-000000000002`。
 
 ### `tasks`
 
 任務主表。
 
+v0.2 實際使用狀態：
+
+- `created`
+- `pending_approval`
+- `blocked`
+- `queued`
+- `executing`
+- `completed`
+- `review`
+- `failed`
+
 重要欄位：
 
-- `status`：目前實際用到 `created`, `blocked`, `approved`, `executing`, `completed`, `review`。
-- `risk_level`：policy 用於阻擋 `high`/`critical`。
-- `metadata`：存放 domains、start_url、expected_domain、planner steps、browser_result、evaluation 等。
-- `approved_by`：schema/ORM 是 UUID。v0.1 demo 會寫入固定 demo user UUID；顯示用 actor label 會存在 `approvals.approved_by`。
+- `risk_level`：`high/critical` 會進入 `pending_approval`。
+- `metadata`：存放 `domains`, `start_url`, `expected_domain`, `policy`, `plan`, `browser_result`, `evaluation`, `error` 等。
+- `correlation_id`：由 `X-Correlation-ID` 或 API 產生 UUID。
+- `approved_by`：保存 demo user UUID。
 
 ### `task_steps`
 
-由 `TaskRunner` 根據 planner steps 建立。現在只建立 step，尚未在每個 Playwright action 後更新 `status/output_data/error_message`。
+`TaskRunner` 依 planner output 建立 steps。目前會建立 step rows，但尚未在每個
+Playwright action 後逐步更新 `status/output_data/error_message`。
 
 ### `task_artifacts`
 
-`TaskRunner` 會在 screenshot/html artifact 寫入本地磁碟後，同步新增 artifact row。`GET /v1/tasks/{task_id}` 會回傳 artifact summary，`GET /v1/artifacts/{artifact_id}/content` 會在確認路徑位於 `ARTIFACT_BASE_PATH` 內後提供內容預覽或下載。
+`TaskRunner` 在 screenshot/html artifact 寫入 local filesystem 後，同步新增
+artifact row。
+
+目前保存：
+
+- `artifact_type`
+- `uri`
+- `sha256`
+- `metadata.media_type`
+- `created_at`
+
+`GET /v1/tasks/{task_id}` 會回傳 artifact summary，`GET /v1/artifacts/{artifact_id}/content`
+會確認 path 位於 `ARTIFACT_BASE_PATH` 內後提供內容。
 
 ### `evaluations`
 
-`TaskRunner` 執行完成後會新增一筆 evaluation。分數來源是：
+Evaluator 會保存：
 
-- final URL 存在：25
-- HTML 已擷取：25
-- artifacts 有產生：25
-- expected domain 命中：25
+- `evaluator_ver`
+- `score`
+- `verdict`
+- `checks`
 
-總分 >= 75 為 `pass`，>= 50 為 `warn`，其餘為 `fail`。
+目前簡化評分包含 final URL、HTML、artifacts 與 expected domain。
 
 ### `approvals`
 
-記錄人工核准資訊。`approved_by` 是 text，用來保存顯示與稽核用 actor label；`tasks.approved_by` 保存實際 user UUID。
+保存 approval display label 與 note。
+
+- `tasks.approved_by`：user UUID。
+- `approvals.approved_by`：顯示用 actor label，例如 `ops@example.com`。
 
 ### `audit_logs`
 
-目前在 task blocked 與 task approved 時寫入。尚未覆蓋 task created、worker execution、policy pass、artifact write、evaluation result 等事件。
+保存 lifecycle audit events。v0.2 已覆蓋：
 
-## 必要 seed
+- `task.created`
+- `task.pending_approval`
+- `task.blocked`
+- `task.approved`
+- `task.queued`
+- `task.execution_started`
+- `task.artifact_written`
+- `task.evaluated`
+- `task.completed`
+- `task.review_required`
+- `task.failed`
 
-目前 API 寫入 task 時會引用固定 tenant/user UUID。資料庫初始化後建議先 seed：
+## Seed Data
+
+`scripts/bootstrap.py` 會建立 demo tenant/user：
 
 ```sql
 INSERT INTO tenants (id, name, status)
@@ -136,10 +126,11 @@ VALUES (
 ON CONFLICT (tenant_id, email) DO NOTHING;
 ```
 
-## 建議修正
+## Next Improvements
 
-- 正式 auth/RBAC 上線後，將 demo 固定 user UUID 改為從 token claims 解析。
-- 在 migration/seed 腳本內建立 default tenant/user，或移除固定 UUID 假設。
-- 擴充 `task_artifacts` retention、content length 與 tenant-scoped access control。
-- 補上狀態 enum/constraint，避免任意 status 字串。
-- 補上 idempotency key unique index 與 correlation ID 查詢 index。
+- 正式 auth/RBAC 上線後，將固定 UUID 改為 token claims。
+- 補 status enum/constraint。
+- 補 idempotency key unique index。
+- 補 correlation ID index。
+- 擴充 `task_artifacts` retention、content length、tenant-scoped access control。
+

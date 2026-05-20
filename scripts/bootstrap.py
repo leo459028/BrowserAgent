@@ -17,7 +17,7 @@ DEFAULT_USER_EMAIL = "ops@example.com"
 
 TOPICS = [
     "agent.tasks.created",
-    "agent.tasks.approved",
+    "agent.tasks.queued",
     "agent.tasks.failed",
     "agent.tasks.completed",
 ]

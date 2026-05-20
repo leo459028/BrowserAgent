@@ -44,6 +44,7 @@ class TaskOut(BaseModel):
     title: str
     instructions: str
     status: str
+    correlation_id: str | None = None
     priority: int
     risk_level: str
     metadata: dict
