@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Browser Agent v0.2 Dashboard</title>
+  <title>Browser Agent v0.3 Dashboard</title>
   <style>
     :root {
       color-scheme: light;
@@ -197,8 +197,8 @@
   <main>
     <header>
       <div>
-        <h1>Browser Agent v0.2 Dashboard</h1>
-        <div class="muted">Local dashboard for lifecycle, approval, metrics, audit, and artifacts.</div>
+        <h1>Browser Agent v0.3 Dashboard</h1>
+        <div class="muted">Local dashboard for lifecycle, approval, metrics, audit, and artifact governance.</div>
       </div>
       <div class="toolbar">
         <button id="refresh" class="secondary">Refresh</button>
@@ -269,6 +269,17 @@
         </section>
 
         <section>
+          <h2>Artifact Query</h2>
+          <div class="button-row">
+            <select id="artifact-select"></select>
+            <button id="artifact-check" class="secondary" disabled>Check access</button>
+          </div>
+          <p id="artifact-access" class="muted">Select an artifact to test governed access.</p>
+          <div id="artifact-preview"></div>
+          <pre id="artifact-metadata">{}</pre>
+        </section>
+
+        <section>
           <h2>Steps</h2>
           <div id="steps" class="muted">No steps yet.</div>
         </section>
@@ -287,9 +298,22 @@
     const statuses = ["created", "pending_approval", "queued", "executing", "completed", "review", "failed", "blocked"];
     const scenarios = {
       allowlisted: {
-        label: "Allowlisted low-risk task",
-        help: "Expected: pending_approval, then queued after approval, then worker execution.",
+        label: "Normal artifact task",
+        help: "Expected: pending_approval, then queued after approval, then screenshot/html artifacts with v0.3 metadata.",
         payload: defaultPayload,
+      },
+      redaction: {
+        label: "Redaction metadata task",
+        help: "Expected: artifact metadata records the redaction hook status for screenshot and HTML outputs.",
+        payload: {
+          ...defaultPayload,
+          title: "Capture redaction metadata",
+          instructions: "Open the allowlisted site and capture artifacts for redaction metadata verification.",
+          metadata: {
+            ...defaultPayload.metadata,
+            redaction_test: true,
+          },
+        },
       },
       highRisk: {
         label: "High-risk task",
@@ -325,6 +349,7 @@
       },
     };
     let currentTaskId = null;
+    let currentArtifacts = [];
     let pollTimer = null;
 
     const $ = (id) => document.getElementById(id);
@@ -437,7 +462,7 @@
         await getJson(`/v1/tasks/${currentTaskId}/approve`, {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({approved_by: actor, note: "Approved from local v0.2 dashboard"}),
+          body: JSON.stringify({approved_by: actor, note: "Approved from local v0.3 dashboard"}),
         });
         await refreshTask();
         await refreshTasks();
@@ -545,18 +570,87 @@
     }
 
     function renderArtifacts(artifacts) {
+      currentArtifacts = artifacts;
+      renderArtifactQuery(null);
       if (!artifacts.length) {
         $("artifacts").innerHTML = '<span class="muted">No artifacts yet.</span>';
         return;
       }
       const screenshot = artifacts.find((artifact) => artifact.artifact_type === "screenshot");
-      const links = artifacts.map((artifact) =>
-        `<a href="${artifact.download_url}" target="_blank" rel="noreferrer">${escapeHtml(artifact.artifact_type)}</a>`
-      ).join(" ");
+      const rows = artifacts.map((artifact) => `
+        <tr>
+          <td>${escapeHtml(artifact.artifact_type)}</td>
+          <td>${escapeHtml(artifact.content_type || "-")}</td>
+          <td>${escapeHtml(artifact.size_bytes ?? "-")}</td>
+          <td class="value">${escapeHtml((artifact.sha256 || "-").slice(0, 12))}</td>
+          <td>${escapeHtml(artifact.backend || "-")}</td>
+          <td>${escapeHtml(artifact.redaction_status || artifact.redaction?.status || "-")}</td>
+          <td>${escapeHtml(new Date(artifact.created_at).toLocaleTimeString())}</td>
+          <td><a href="${artifact.download_url}" target="_blank" rel="noreferrer">view</a></td>
+        </tr>
+      `).join("");
       $("artifacts").innerHTML = `
         ${screenshot ? `<img class="preview" src="${screenshot.download_url}" alt="Browser screenshot artifact">` : ""}
-        <p>${links}</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Content type</th>
+              <th>Size</th>
+              <th>SHA</th>
+              <th>Backend</th>
+              <th>redaction status</th>
+              <th>Created</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
       `;
+      renderArtifactQuery(artifacts[0]?.id || null);
+    }
+
+    function renderArtifactQuery(selectedId) {
+      const select = $("artifact-select");
+      select.innerHTML = "";
+      currentArtifacts.forEach((artifact) => {
+        const option = document.createElement("option");
+        option.value = artifact.id;
+        option.textContent = `${artifact.artifact_type} · ${(artifact.sha256 || "").slice(0, 12) || artifact.id}`;
+        select.append(option);
+      });
+      if (selectedId) select.value = selectedId;
+      const selected = selectedArtifact();
+      $("artifact-check").disabled = !selected;
+      $("artifact-metadata").textContent = selected ? JSON.stringify(selected.metadata || {}, null, 2) : "{}";
+      $("artifact-access").textContent = selected ? "Ready to test governed access." : "Select an artifact to test governed access.";
+      if (selected?.artifact_type === "screenshot") {
+        $("artifact-preview").innerHTML = `<img class="preview" src="${selected.download_url}" alt="Selected screenshot artifact">`;
+      } else if (selected?.artifact_type === "html") {
+        $("artifact-preview").innerHTML = `<p><a href="${selected.download_url}" target="_blank" rel="noreferrer">Open HTML artifact</a></p>`;
+      } else {
+        $("artifact-preview").innerHTML = "";
+      }
+    }
+
+    function selectedArtifact() {
+      return currentArtifacts.find((artifact) => artifact.id === $("artifact-select").value);
+    }
+
+    async function checkArtifactAccess() {
+      const artifact = selectedArtifact();
+      if (!artifact) return;
+      $("artifact-access").textContent = "Checking access...";
+      try {
+        const response = await fetch(artifact.download_url);
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`${response.status} ${response.statusText}: ${text}`);
+        }
+        $("artifact-access").textContent = `Access OK · ${response.headers.get("content-type") || artifact.content_type || "unknown content type"}`;
+      } catch (error) {
+        $("artifact-access").innerHTML = `<span class="error-text">${escapeHtml(error.message)}</span>`;
+      }
     }
 
     function escapeHtml(value) {
@@ -578,6 +672,8 @@
     $("create-task").addEventListener("click", createTask);
     $("approve").addEventListener("click", approveSelected);
     $("refresh").addEventListener("click", refreshAll);
+    $("artifact-select").addEventListener("change", () => renderArtifactQuery($("artifact-select").value));
+    $("artifact-check").addEventListener("click", checkArtifactAccess);
     renderScenario();
     renderStatusFlow("idle");
     refreshAll();

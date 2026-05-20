@@ -1,20 +1,23 @@
 # Runbook
 
-本 runbook 用於本機 Docker Compose 與 v0.2 Dashboard 驗證。Production 仍需補
-auth、secret management、object store、retry/DLQ、sandbox isolation 與部署
-manifest。
+本 runbook 涵蓋本機 Docker Compose 的 v0.3 Dashboard 與 artifact governance flow 驗證。Production 仍需要正式 auth/RBAC、secret management、object storage backend、retry/DLQ hardening、以及更強的 browser sandbox isolation。
 
-## 1. 啟動本機 stack
+## 1. 啟動 Stack
 
 ```powershell
 copy .env.example .env
-docker compose up --build
+docker compose up -d --build
 ```
 
-Compose 會在 `api` 與 `worker` 啟動前執行 `python scripts/bootstrap.py`，建立
-schema、seed demo tenant/user，並建立本機 Kafka topics。
+`api` 與 `worker` services 會在 startup 時執行 `python scripts/bootstrap.py`。Bootstrap 會建立 schema、seed demo identity，並建立 local Kafka topics。
 
-檢查：
+檢查 service status：
+
+```powershell
+docker compose ps
+```
+
+檢查 API：
 
 ```powershell
 curl.exe http://localhost:8000/healthz
@@ -22,32 +25,49 @@ curl.exe http://localhost:8000/readyz
 curl.exe http://localhost:8000/metrics
 ```
 
-## 2. 開啟 v0.2 Dashboard
-
-瀏覽器開啟：
+## 2. 開啟 v0.3 Dashboard
 
 ```text
 http://localhost:8000/demo
 ```
 
-Dashboard 可測試四種情境：
+Dashboard scenarios：
 
-- Allowlisted low-risk task：預期進入 `pending_approval`，核准後進入 `queued`。
-- High-risk task：預期進入 `pending_approval`，policy reason 顯示 high-risk。
-- Sensitive instruction task：預期進入 `pending_approval`，policy reason 顯示 sensitive action。
-- Blocked-domain task：預期進入 `blocked`，不能核准。
+- Normal artifact task：預期 `pending_approval`，approval 後進入 `queued`，接著 worker 寫入 screenshot/html artifacts。
+- Redaction metadata task：預期 artifacts 具備 redaction metadata。
+- High-risk task：預期 `pending_approval`，並有 high-risk policy reason。
+- Sensitive instruction task：預期 `pending_approval`，並有 sensitive-action policy reason。
+- Blocked-domain task：預期 `blocked`。
 
-Dashboard 可觀察：
+Dashboard observations：
 
-- 最近 tasks。
-- status flow。
-- metrics。
-- audit timeline。
-- steps。
-- evaluation。
-- screenshot 與 HTML artifact。
+- recent tasks；
+- status flow；
+- metrics；
+- audit timeline；
+- steps；
+- evaluation；
+- screenshot 與 HTML artifacts；
+- artifact table：type、content type、size、SHA、backend、redaction status、created time、action；
+- Artifact Query panel：metadata JSON 與 access check button。
 
-## 3. 手動 API 測試
+## 3. 執行 Tests
+
+Host：
+
+```powershell
+pytest -q
+```
+
+Docker：
+
+```powershell
+docker compose exec -T api pytest -q
+```
+
+目前預期結果：`24 passed`。
+
+## 4. API Smoke Test
 
 建立 allowlisted task：
 
@@ -64,33 +84,17 @@ $body = @{
   }
 } | ConvertTo-Json -Depth 5
 
-curl.exe -X POST http://localhost:8000/v1/tasks -H "Content-Type: application/json" -d $body
+curl.exe -X POST http://localhost:8000/v1/tasks `
+  -H "Content-Type: application/json" `
+  -d $body
 ```
 
-建立 high-risk task，預期狀態為 `pending_approval`：
-
-```powershell
-$body = @{
-  title = "Review high-risk task"
-  instructions = "Open the allowlisted site and prepare a report."
-  priority = 5
-  risk_level = "high"
-  metadata = @{
-    domains = @("example.com")
-    start_url = "https://example.com"
-    expected_domain = "example.com"
-  }
-} | ConvertTo-Json -Depth 5
-
-curl.exe -X POST http://localhost:8000/v1/tasks -H "Content-Type: application/json" -d $body
-```
-
-核准 task：
+Approve：
 
 ```powershell
 curl.exe -X POST http://localhost:8000/v1/tasks/<TASK_ID>/approve `
   -H "Content-Type: application/json" `
-  -d "{\"approved_by\":\"ops@example.com\",\"note\":\"local test\"}"
+  -d "{\"approved_by\":\"ops@example.com\",\"note\":\"local v0.3 test\"}"
 ```
 
 讀取 task：
@@ -99,38 +103,43 @@ curl.exe -X POST http://localhost:8000/v1/tasks/<TASK_ID>/approve `
 curl.exe http://localhost:8000/v1/tasks/<TASK_ID>
 ```
 
-讀取 task audit timeline：
+讀取 audit：
 
 ```powershell
 curl.exe http://localhost:8000/v1/tasks/<TASK_ID>/audit
 ```
 
-列出最近 tasks：
+開啟 artifact content：
 
 ```powershell
-curl.exe http://localhost:8000/v1/tasks?limit=20
+curl.exe http://localhost:8000/v1/artifacts/<ARTIFACT_ID>/content
 ```
 
-## 4. Kafka topics
+成功 task 預期：
 
-若需要手動建立 topics：
+- final status 是 `completed`；
+- 兩個 artifacts：`screenshot` 與 `html`；
+- artifact metadata 具備 `content_type`、`size_bytes`、`backend=local`、`redaction.status=not_applied`；
+- artifact content endpoints 回傳 `200`。
+
+## 5. Kafka Topics
+
+列出 topics：
 
 ```powershell
-docker compose exec kafka kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.tasks.created --partitions 3 --replication-factor 1
-docker compose exec kafka kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.tasks.queued --partitions 3 --replication-factor 1
-docker compose exec kafka kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.tasks.failed --partitions 3 --replication-factor 1
-docker compose exec kafka kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic agent.tasks.completed --partitions 3 --replication-factor 1
+docker compose exec kafka kafka-topics --bootstrap-server kafka:9092 --list
 ```
 
-## 5. 常見問題
+本機預期 topics：
+
+- `agent.tasks.created`
+- `agent.tasks.queued`
+- `agent.tasks.failed`
+- `agent.tasks.completed`
+
+## 6. Troubleshooting
 
 ### `/readyz` 失敗
-
-可能原因：
-
-- Postgres 尚未 ready。
-- `DATABASE_URL` hostname 不正確。
-- DB 尚未建立。
 
 檢查：
 
@@ -140,24 +149,17 @@ docker compose logs postgres
 docker compose exec postgres pg_isready -U agent -d agent
 ```
 
-### `POST /v1/tasks` 發生 foreign key error
+### `POST /v1/tasks` 出現 foreign key errors
 
-可能原因是 demo tenant/user 尚未 seed。執行：
+執行 bootstrap：
 
 ```powershell
 docker compose exec api python scripts/bootstrap.py
 ```
 
-### task 建立後 worker 沒有執行
+### Task 沒有進展
 
-可能原因：
-
-- task 尚未 approval。
-- task 狀態是 `blocked`。
-- Kafka topics 尚未建立。
-- worker 連不到 Kafka。
-
-檢查：
+檢查 approval、Kafka、worker：
 
 ```powershell
 docker compose logs worker
@@ -165,9 +167,13 @@ docker compose exec kafka kafka-topics --bootstrap-server kafka:9092 --list
 curl.exe http://localhost:8000/v1/tasks/<TASK_ID>
 ```
 
-### worker Playwright 失敗
+### Artifact content 回傳 `403 outside artifact storage`
 
-可能原因是 Docker image 沒有正確安裝 Chromium browser binary。可重建：
+請確認你呼叫的是寫入 artifact 的同一個 API process。如果 local uvicorn 和 Docker 都使用 port `8000`，測試 Docker 前請先停止 local process。
+
+### Worker Playwright failure
+
+重新 build image：
 
 ```powershell
 docker compose build --no-cache api worker

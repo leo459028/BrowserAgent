@@ -1,166 +1,244 @@
-# Browser Agent 應用場景
+# 使用情境
 
-這個專案是一個企業級 Browser Agent 平台的基礎架構。它不只是單純用
-Playwright 寫幾個瀏覽器自動化腳本，而是把「瀏覽器代理任務」包裝成一套
-可控、可審核、可追蹤、可擴充的後端平台。
+本文件說明目前 `BrowserAgent` scaffold 可以支援、展示與驗證的主要使用情境。文件中的技術名詞會保留英文，例如 `API`、`Dashboard`、`Task`、`Artifact`、`Policy`、`SkillHub`、`Planner`、`Worker`、`Playwright`，但每個情境都以繁體中文描述其目的、流程、目前能力與限制。
 
-使用者可以透過 API 建立任務，系統會先檢查政策規則，例如允許拜訪的網域、
-任務風險等級，以及是否涉及登入、密碼、付款、轉帳等敏感操作。通過檢查後，
-任務會等待人工核准，再交由背景工作程式執行。執行過程中，系統會保存截圖、
-HTML、執行步驟、評估結果與稽核紀錄。
+## 1. 受治理的瀏覽器任務執行
 
-## 主要作用
+這個情境適合用來展示平台最核心的能力：使用者提出一個瀏覽器任務，系統先進行 `Policy` 與 approval 檢查，再由 `Worker` 執行瀏覽器動作，最後保存結果、`Artifact` 與 audit trail。
 
-這個專案的主要作用，是提供一套受治理的瀏覽器自動化執行平台，可用於 AI
-Agent 或固定流程的自動化任務。
+### 適用對象
 
-一般的瀏覽器自動化腳本通常只負責「打開網頁、點擊、輸入、擷取資料」。但在
-企業環境裡，還會需要回答更多問題：
+- 想用 `API` 建立 browser automation task 的開發者。
+- 想透過 `Dashboard` 觀察任務生命週期的操作人員。
+- 想確認 allowlist、approval、audit、artifact 保存是否串起來的測試人員。
 
-- 這個任務是誰建立的？
-- 任務是否只能拜訪允許的網域？
-- 是否有涉及高風險操作？
-- 高風險任務是否經過人工核准？
-- 執行過程是否留下截圖與 HTML 作為證據？
-- 任務失敗時是否能追蹤錯誤？
-- 是否能用指標監控整體執行情況？
-- 日後稽核時是否能重建當時的任務流程？
-
-這個專案就是為了解決這類問題而設計的。
-
-## 系統流程概念
-
-一個典型任務會經過以下流程：
-
-1. 使用者透過 FastAPI 建立任務。
-2. 系統檢查風險等級、允許網域與敏感操作。
-3. 通過政策檢查的任務進入「等待核准」狀態。
-4. 操作者核准後，任務進入佇列。
-5. Worker 從 Kafka 取得任務。
-6. Worker 使用 Playwright 執行瀏覽器操作。
-7. 系統保存截圖、HTML、執行步驟與結果。
-8. 評估器檢查結果是否符合預期。
-9. PostgreSQL 保存任務狀態、產物、評估結果與稽核紀錄。
-
-## 實際應用場景
-
-### 1. 受控的網頁資料蒐集
-
-採購團隊可能需要定期比較供應商網站上的公開價格、規格或庫存資訊。這類需求
-看起來像一般爬蟲，但在企業情境下，通常還需要安全控管與執行證據。
-
-例如可以建立一個任務：
+### 建立 Task 範例
 
 ```json
 {
-  "title": "Collect supplier pricing",
-  "instructions": "Open the allowlisted supplier sites, compare pricing, and report results.",
-  "priority": 5,
-  "risk_level": "medium",
+  "title": "Capture example",
+  "instructions": "Open the allowlisted site and capture a screenshot.",
+  "priority": 1,
+  "risk_level": "low",
   "metadata": {
     "domains": ["example.com"],
     "start_url": "https://example.com",
-    "expected_domain": "example.com",
-    "output_format": "json"
+    "expected_domain": "example.com"
   }
 }
 ```
 
-系統會先確認任務只會拜訪允許的網域，例如 `example.com`。核准後，Worker 會用
-Playwright 打開頁面、擷取內容、保存截圖與 HTML，最後再由評估器確認結果是否
-合理。
+### 操作流程
 
-這樣做的好處是，團隊不只拿到擷取後的價格資料，也能保留當時頁面的截圖與
-HTML。日後如果價格有爭議，或需要確認資料來源，就可以回頭檢查任務紀錄。
+1. 使用者透過 `API` 或 `Dashboard` 建立 `Task`。
+2. `API` 驗證 request，並掃描 instructions 是否有 prompt-injection-like patterns。
+3. `Policy` 檢查 domain、risk level 與 sensitive instructions。
+4. 符合規則的 task 進入 `pending_approval`。
+5. 操作人員 approve task 後，task 進入 `queued`。
+6. `Worker` 消費 queued event，並把 task 移到 `executing`。
+7. `Playwright` 開啟 allowlisted page，執行 planner 產生的 browser steps。
+8. 系統擷取 screenshot 與 HTML artifacts。
+9. `Evaluator` 檢查 final URL、HTML、artifacts 與 expected domain。
+10. Task 最後變成 `completed`、`review` 或 `failed`。
+11. 使用者可透過 `API` 或 `Dashboard` 檢視 audit、evaluation、steps 與 artifact metadata。
 
-### 2. Web Application Smoke Testing
+### 目前能力
 
-產品或 QA 團隊可以在部署後，用這個平台快速確認重要頁面是否正常開啟與渲染。
+- 支援 allowlisted domain 的基本瀏覽器任務。
+- 支援 task approval gate。
+- 支援 screenshot 與 HTML artifact 保存。
+- 支援 task-level audit timeline。
+- 支援 evaluation result 顯示。
 
-例如每次部署完成後，自動建立任務去檢查：
+### 目前限制
 
-- 首頁是否可正常載入
-- 價格頁是否可正常顯示
-- 文件頁是否沒有回傳錯誤
-- Demo 頁是否產生預期畫面
-- 最終網址是否仍在預期網域中
+- `Planner` 目前仍是 heuristic stub，尚未接 LLM 或 `SkillHub` resolver。
+- 尚未支援 production auth/RBAC。
+- 尚未支援 per-action confirmation。
 
-Worker 執行後會保存截圖與 HTML，評估器可以檢查頁面是否成功載入、是否有產生
-產物、是否停留在正確網域。這讓部署驗證不只是一個「成功或失敗」的訊號，而是
-有具體證據可以追蹤。
+## 2. 本機 QA 與 Smoke Test Agent
 
-這個場景很適合放在發布流程中，作為正式人工驗收前的第一層自動檢查。
+這個情境適合用來把平台當成本機 browser smoke-test runner。它可以協助確認一個簡單 web flow 是否能被 `Worker` 開啟、截圖、保存 HTML，並透過 `Evaluator` 得到基本驗證結果。
 
-### 3. 需要人工核准的瀏覽器自動化
+### 適用對象
 
-有些自動化任務不適合建立後立刻執行。例如任務內容提到登入、密碼、一次性驗證
-碼、銀行、付款、轉帳等操作時，系統應該先暫停，等待人工確認。
+- 想快速驗證本機 Docker Compose stack 是否可用的開發者。
+- 想確認 `Worker`、`Playwright`、artifact store 是否能串接成功的測試人員。
+- 想把瀏覽器操作結果保存成 evidence 的 QA 使用者。
 
-這個專案目前已經有這類治理思路。任務建立後會先經過政策檢查，符合條件的任務
-進入 `pending_approval`，只有在操作者核准後，才會進入佇列並交給 Worker 執行。
-核准人、核准時間、備註與任務狀態都可以被記錄下來。
+### 操作流程
 
-這很適合內部營運團隊使用。團隊可以享受自動化帶來的效率，同時避免代理程式
-未經確認就執行高風險操作。
+1. 使用者在 `Dashboard` 選擇 normal artifact task。
+2. 系統建立 task，並讓 task 進入 `pending_approval`。
+3. 操作人員在 `Dashboard` approve task。
+4. `Worker` 執行瀏覽器流程。
+5. 系統保存 screenshot 與 HTML artifacts。
+6. `Dashboard` 顯示 final URL、evaluation、artifact preview 與 artifact table。
 
-### 4. 網站變更監控與證據保存
+### 目前能力
 
-法務、客服、合規或營運團隊，可能需要監控外部網站的公開頁面，例如服務條款、
-公告頁、合作夥伴資訊、系統狀態頁或政策頁。
+- 可開啟 allowlisted page。
+- 可擷取 screenshot。
+- 可擷取 HTML。
+- 可驗證 final URL 與 expected domain。
+- 可把 evidence 以 artifacts 形式保存。
+- 可從 `Dashboard` 檢視執行結果。
 
-可以透過排程定期建立任務，讓系統打開指定網址，保存 HTML 與截圖。後續再用
-其他流程比較不同時間點的內容，就能判斷頁面是否發生重要變更。
+### 目前限制
 
-因為這個平台會保存任務狀態、截圖、HTML 與評估結果，所以它可以作為一套
-「有證據的網站監控系統」基礎，而不只是單純擷取文字。
+- 尚未支援複雜互動流程的完整規劃。
+- 尚未支援 browser replay UI。
+- 目前主要驗證單一 task 的端到端鏈路，不是完整 testing framework。
 
-### 5. 建立可治理的 Agent 工具平台
+## 3. 人工核准關卡
 
-這個專案也包含 SkillHub 的概念，可用來註冊不同版本的能力。例如：
+這個情境展示系統如何在 `Worker` 執行前加入 human approval gate。它適合用於需要人工確認的高風險任務、敏感指令或需要留下審核紀錄的瀏覽器操作。
 
-- 開啟網址
-- 點擊元素
-- 輸入文字
-- 擷取頁面文字
-- 保存截圖
-- 下載檔案
+### 適用對象
 
-未來如果接上 LLM 規劃器，系統就可以根據任務內容選擇可用能力，產生受控的
-瀏覽器操作步驟。這讓平台可以從固定流程自動化，逐步演進成一套可治理的 Agent
-執行環境。
+- 需要審核 high-risk tasks 的 operator。
+- 需要確認 sensitive instructions 的 reviewer。
+- 需要保留 approval actor、time、note 的 audit 使用者。
 
-重點是，Agent 能做什麼不是隱性的，而是可以被註冊、版本化、檢查與稽核。
+### 操作流程
 
-## 適合使用的情境
+1. 使用者建立 task。
+2. `Policy` 判斷 task 是否需要 approval。
+3. Task 進入 `pending_approval`。
+4. 操作人員在 `Dashboard` 或透過 `POST /v1/tasks/{task_id}/approve` approve task。
+5. 系統記錄 approval row 與 audit event。
+6. Task 進入 `queued`，等待 `Worker` 執行。
 
-這個專案適合用在以下情境：
+### 目前能力
 
-- 瀏覽器自動化必須限制在指定網域
-- 任務執行前需要人工核准
-- 需要保存截圖與 HTML 作為證據
-- 任務需要透過佇列非同步執行
-- 需要追蹤任務狀態、失敗原因與重試情況
-- 需要監控整體執行數量、失敗率與耗時
-- 未來想把 LLM 規劃能力接到受控工具上
+- `risk_level=high|critical` 會要求 approval。
+- 包含 `login`、`password`、`payment`、`transfer` 等 sensitive instructions 會要求 approval。
+- non-allowlisted domain 會直接 `blocked`，不能 approve。
+- Approval 會記錄 demo actor UUID 與 display label。
 
-## 較不適合的情境
+### 目前限制
 
-如果需求只是很簡單的本機腳本，這個平台可能會太重。例如：
+- 目前沒有正式 production auth/RBAC。
+- Approval actor 仍是固定 demo identity。
+- 尚未支援 per-action approval 或 step-level confirmation。
 
-- 一次性的本機瀏覽器腳本
-- 不需要稽核紀錄的簡單爬蟲
-- 不需要保存任務狀態的自動化
-- 還不需要安全政策、人工核准或監控的早期原型
+## 4. Artifact 治理檢視
 
-這些情境可能直接使用 Playwright 腳本就足夠。
+v0.3 的重點是讓 `Artifact` 不只是檔案，而是可以被治理、查詢、審計與安全讀取的 evidence。這個情境適合驗證 artifact metadata 是否完整、access control 是否生效，以及 `Dashboard` 是否能協助操作人員檢視 artifact。
 
-## 目前成熟度
+### 適用對象
 
-目前這個專案比較適合被理解為「可往正式產品發展的基礎架構」。它已經包含許多
-核心元件，例如 FastAPI、PostgreSQL、Kafka、Redis、Playwright Worker、政策檢查、
-人工核准、產物保存、指標監控與稽核紀錄。
+- 需要檢視 task execution evidence 的 operator。
+- 需要確認 artifact metadata 與 audit 是否完整的工程師。
+- 需要驗證 tenant boundary 與 base-path protection 的安全測試人員。
 
-不過，部分正式上線會需要的能力仍在後續規劃中，例如完整的 LLM provider 整合、
-人工核准介面、SSO/OIDC、RBAC、Kubernetes 部署設定、更強的瀏覽器沙箱，以及正式
-環境的機密管理。
+### 可檢視的 Artifact metadata
 
+- `artifact_type`：例如 `screenshot` 或 `html`。
+- `content_type`：例如 `image/png` 或 `text/html; charset=utf-8`。
+- `size_bytes`：artifact 實際大小。
+- `sha256`：artifact checksum。
+- `backend`：目前為 `local`。
+- `retention`：保留政策 metadata，目前為 default policy。
+- `redaction`：redaction hook metadata，目前為 no-op。
+- `download_url`：透過 API 存取 artifact content 的 governed access URL。
+
+### Access control 行為
+
+- Artifact 必須存在。
+- Artifact 所屬 task tenant 必須符合目前 demo tenant。
+- Local artifact path 必須 resolve 在 `ARTIFACT_BASE_PATH` 底下。
+- Tenant mismatch 或 path traversal 會回傳 `403`。
+- Missing file 會回傳 `404`。
+
+### Dashboard 操作
+
+- `Artifacts` 區塊會顯示 artifact table。
+- Screenshot artifact 可直接 preview。
+- HTML artifact 可透過 link 開啟。
+- `Artifact Query` panel 會顯示 metadata JSON。
+- `Check access` 會呼叫 governed content endpoint，並顯示 `Access OK` 或錯誤訊息。
+
+### 目前限制
+
+- `redaction hook` 目前是 no-op，只記錄 `not_applied`。
+- MinIO/S3 backend 尚未實作，active backend 仍是 local filesystem。
+- 尚未支援 signed URLs 或 production retention policy。
+
+## 5. Policy Regression 測試
+
+這個情境用來確認後續修改不會破壞既有 governance gates。當未來導入更完整的 `Planner`、`SkillHub` 或更複雜的 browser actions 時，這些 regression cases 可以幫助確認系統仍會遵守目前的 policy 行為。
+
+### 適用對象
+
+- 修改 `Policy` 或 `Orchestrator` 的工程師。
+- 修改 `Worker` 或 `Planner` 的工程師。
+- 想在 release 前確認 approval 與 blocked behavior 沒有 regression 的測試人員。
+
+### Dashboard 可測情境
+
+- Normal allowlisted task：預期進入 `pending_approval`，approval 後可執行。
+- High-risk task：預期進入 `pending_approval`，並顯示 high-risk policy reason。
+- Sensitive instruction task：預期進入 `pending_approval`，並顯示 sensitive-action policy reason。
+- Blocked-domain task：預期直接進入 `blocked`，不能 approve。
+
+### Automated tests 覆蓋
+
+- Domain allowlist blocking。
+- High-risk approval。
+- Sensitive instruction approval。
+- Approval status transition。
+- Failed task metadata。
+- Artifact access boundary。
+- Dashboard v0.3 rendering。
+
+### 目前限制
+
+- 尚未有 CI pipeline。
+- 尚未有 browser replay comparison。
+- Metrics 仍是 process-local，尚未聚合 worker metrics。
+
+## 6. SkillHub 整合前置情境
+
+`SkillHub` 目前已經有 registration API，但尚未整合到 `Planner` 與 `Runner`。這個情境描述 v0.4 之前的準備方向：先保留版本化 capability 的資料結構，之後讓 planner output 可以選擇對應的 skill 或 tool。
+
+### 適用對象
+
+- 準備實作 v0.4 Planner/SkillHub integration 的工程師。
+- 想定義 versioned browser capability 的平台設計者。
+- 想把 tool/action selection 從 hardcoded heuristic 拆出去的維護者。
+
+### 未來操作流程
+
+1. 使用者或管理者透過 `POST /v1/skills` 註冊 skill。
+2. `SkillHub` 保存 skill name、version、entrypoint、input/output schema、policy tags。
+3. `Planner` 產生 browser plan 時，透過 `SkillHub` resolver 選擇合適 capability。
+4. `Runner` validate planner output。
+5. 若 planner output invalid，系統使用 deterministic fallback。
+6. Task metadata 與 audit 記錄 planner version、prompt metadata 與 selected skill。
+
+### 目前能力
+
+- 已有 `POST /v1/skills`。
+- 已有 `GET /v1/skills`。
+- 已有 `SkillHub.resolve()` 的基本查詢能力。
+
+### 目前限制
+
+- `Planner` 尚未使用 `SkillHub`。
+- Planner output JSON schema 尚未定義。
+- 尚未保存 planner version 與 prompt metadata。
+- 尚未有 invalid planner output fallback。
+
+## 目前非目標
+
+以下項目目前不屬於 v0.3 已完成範圍：
+
+- Production operator UI。
+- 完整 SSO/OIDC/RBAC。
+- 真正的 MinIO/S3 artifact backend。
+- Browser replay UI。
+- Distributed tracing。
+- Kubernetes deployment。
+- Policy-as-code rule management。
+- Per-action confirmation。
