@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from playwright.sync_api import sync_playwright
 
 @dataclass
 class BrowserResult:
@@ -17,6 +16,8 @@ class BrowserRunner:
         self.timeout_seconds = timeout_seconds
 
     def execute(self, task: dict, artifact_store, allowed_domains: set[str]) -> BrowserResult:
+        from playwright.sync_api import sync_playwright
+
         plan = (task.get("metadata") or {}).get("plan") or []
         start_url = (task.get("metadata") or {}).get("start_url")
 
@@ -60,8 +61,14 @@ class BrowserRunner:
                     observation["value"] = page.locator(target).first.inner_text(timeout=self.timeout_seconds * 1000)
                 elif action == "screenshot":
                     shot = page.screenshot(full_page=True)
-                    stored = artifact_store.write_bytes(str(task["id"]), "screenshot", shot, suffix=".png")
-                    artifacts.append({"type": "screenshot", "uri": stored.uri, "sha256": stored.sha256})
+                    stored = artifact_store.write_bytes(
+                        str(task["id"]),
+                        "screenshot",
+                        shot,
+                        suffix=".png",
+                        content_type="image/png",
+                    )
+                    artifacts.append(_stored_artifact_payload("screenshot", stored))
                 else:
                     observation["error"] = f"unsupported action: {action}"
                 observations.append(observation)
@@ -70,8 +77,14 @@ class BrowserRunner:
             title = page.title()
             html = page.content()
 
-            stored_html = artifact_store.write_bytes(str(task["id"]), "html", html.encode("utf-8"), suffix=".html")
-            artifacts.append({"type": "html", "uri": stored_html.uri, "sha256": stored_html.sha256})
+            stored_html = artifact_store.write_bytes(
+                str(task["id"]),
+                "html",
+                html.encode("utf-8"),
+                suffix=".html",
+                content_type="text/html; charset=utf-8",
+            )
+            artifacts.append(_stored_artifact_payload("html", stored_html))
 
             browser.close()
 
@@ -90,3 +103,15 @@ class BrowserRunner:
         host = urlparse(url).netloc
         if host and allowed_domains and not any(host == d or host.endswith("." + d) for d in allowed_domains):
             raise ValueError(f"blocked domain: {host}")
+
+
+def _stored_artifact_payload(artifact_type: str, stored) -> dict:
+    return {
+        "type": artifact_type,
+        "uri": stored.uri,
+        "sha256": stored.sha256,
+        "content_type": stored.content_type,
+        "size_bytes": stored.size_bytes,
+        "backend": stored.backend,
+        "metadata": stored.metadata,
+    }
