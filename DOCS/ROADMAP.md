@@ -1,99 +1,91 @@
 # Roadmap
 
-Roadmap 依目前 scaffold 狀態切成可落地階段。每個階段都應有測試、文件與可驗證
-Dashboard 或 demo。
+本 roadmap 描述 BrowserAgent scaffold 的 implementation slices。
 
-## v0.1：本機可跑通 demo
+## v0.1：本機可執行 Demo
 
-狀態：已完成。
+目標：讓 Docker Compose 跑通最短 browser task flow。
 
-目標是讓本機 Docker Compose 可以跑通最短 browser task flow。`/demo` 可建立並
-核准 `https://example.com` 任務，worker 可使用 Playwright 完成截圖，UI 可顯示
-completed status、evaluation、screenshot 與 HTML artifact。
+已實作：
 
-## v0.2：任務生命週期、核准與觀察 Dashboard
+- API 與 worker containers。
+- Postgres/Kafka/Redis/MinIO services。
+- 透過 Playwright 執行 example task。
+- Completed status、evaluation、screenshot、HTML artifact。
 
-狀態：completion/stabilization 已完成本輪收尾。
+## v0.2：Lifecycle、Approval、Observability Dashboard
 
-v0.2 的目標是讓任務狀態、policy decision、approval、audit、metrics 與 worker
-行為可以被 API、測試與 Dashboard 觀察。
+目標：讓 task state、policy decisions、approval、audit、metrics、worker behavior 可以透過 API、tests、Dashboard 觀察。
 
-已完成：
+已實作：
 
-- allowlisted low/medium task 進入 `pending_approval`。
-- `risk_level=high|critical` 不再永久 `blocked`，而是進入 `pending_approval`。
-- sensitive instruction，例如 `login`, `password`, `payment`, `transfer`，會進入 `pending_approval`。
-- 非 allowlist domain 維持 `blocked`。
-- `PolicyDecision.requires_approval` 已接入 Orchestrator。
-- policy reason 已寫入 task metadata 與 audit payload。
-- approval 後 task 進入 `queued`，並發布 `agent.tasks.queued` event。
-- worker 只執行 `queued` task。
-- 成功後進入 `completed/review`，失敗後進入 `failed` 並保存 error metadata。
-- 核心 metrics 已接上 create/executed/failed/duration；目前為 process-local metrics，尚未做 API/Worker 匯總。
-- lifecycle audit 已覆蓋 created、pending approval、blocked、approved、queued、execution started、artifact written、evaluated、completed/review required、failed。
-- 新增 `GET /v1/tasks` 供 Dashboard 顯示最近任務。
-- 新增 `GET /v1/tasks/{task_id}/audit` 供 Dashboard 顯示 audit timeline。
-- `/demo` 已升級為 v0.2 Dashboard，可建立多種任務情境、核准 pending 任務、查看 metrics/audit/steps/artifacts。
+- allowlisted low/medium tasks 進入 pending approval；
+- high/critical risk tasks 進入 pending approval；
+- sensitive instructions 進入 pending approval；
+- non-allowlisted domains 進入 blocked status；
+- policy reason 存入 task metadata 與 audit payloads；
+- approval 將 task 移到 `queued` 並 publish `agent.tasks.queued`；
+- worker consume queued tasks；
+- failed execution 寫入 error metadata；
+- process-local metrics；
+- lifecycle audit events；
+- `GET /v1/tasks`；
+- `GET /v1/tasks/{task_id}/audit`；
+- `/demo` Dashboard 支援 task creation、approval、metrics、audit、steps、evaluation、artifacts。
 
-仍保留到後續版本：
+## v0.3：Artifact Governance 與 Dashboard Query
 
-- 正式 auth、OIDC/JWT 與 RBAC。
-- 正式多租戶 request context。
-- DLQ、progress events 與 replay tooling。
-- per-action confirmation。
-- 更完整的 production Dashboard 與 alerting。
-- 跨 process metrics 匯總或 Worker metrics endpoint。
+目標：讓 artifacts 能被 governance、inspection、testing，並能透過 API 與 Dashboard 驗證。
 
-## v0.3：Artifact 與治理補強
+已實作：
 
-下一步建議進入 v0.3，但不要和 v0.2 混在同一批變更裡。
+- artifact backend abstraction；
+- local artifact backend 保留為 active backend；
+- S3 backend placeholder 預留給未來 deployment slice；
+- artifact metadata：checksum、content type、size、backend、retention metadata、redaction metadata；
+- no-op HTML/screenshot redaction hook；
+- tenant-scoped artifact read checks；
+- local artifact content 的 base-path enforcement；
+- governed artifact access URL；
+- `/demo` v0.3 Dashboard artifact table 與 Artifact Query panel；
+- v0.3 unit、integration、Docker、Dashboard tests。
 
-目標：
+Acceptance status：passed。請見 [TEST_REPORT.md](./TEST_REPORT.md)。
 
-- 抽象 artifact backend，保留 local backend，新增 MinIO/S3 backend。
-- 補 artifact metadata：checksum、content type、size、retention metadata。
-- 加入 HTML/screenshot redaction hook。
-- 補 artifact access control 與 tenant-scoped read checks。
-- 為 artifact 產生可治理的 access URL。
+## v0.4：Planner/SkillHub Integration
 
-驗收：
+建議下一個 slice。
 
-- 每次 screenshot/html 都能從 `task_artifacts` 查到。
-- artifact metadata 完整。
-- redaction hook 有測試覆蓋。
-- artifact 讀取不能越過 storage base path 或 tenant boundary。
+規劃項目：
 
-## v0.4：Planner/SkillHub 整合
+- 定義 Planner output JSON schema；
+- runner execution 前 validate planner output；
+- 將 SkillHub resolver 接到 tool/action selection；
+- 儲存 planner version 與 prompt/version metadata；
+- 當 planner output invalid 時提供 deterministic fallback；
+- 保留 v0.3 產生的 artifact governance metadata。
 
-目標：
+## v0.5：Auth/RBAC 與 Production Approval
 
-- 定義 Planner output JSON schema。
-- SkillHub resolver 參與 tool/action selection。
-- 保存 planner version 與 prompt/version metadata。
-- 對每個 browser step 做 validation。
-- 保留 deterministic fallback，方便測試。
+規劃項目：
 
-## v0.5：Pilot 多租戶與正式 approval
+- OIDC/JWT auth；
+- tenant/user/role claims；
+- RBAC roles，例如 creator、approver、operator、admin；
+- production human approval API 與 UI；
+- approval audit 使用 authenticated actor。
 
-目標：
+## v1.0：Production-Ready Platform
 
-- 導入 OIDC/JWT auth。
-- 從 token claims 取得 tenant/user/role。
-- 建立 RBAC：creator、approver、operator、admin。
-- 提供正式 human approval API 與簡易管理 UI。
-- approval audit 可追溯真實 actor。
+規劃項目：
 
-## v1.0：Production-ready
-
-目標：
-
-- Kubernetes manifests / Helm chart。
-- Worker autoscaling。
-- Redis locks/dedupe/rate limiting。
-- DLQ 與 replay tooling。
-- gVisor/Kata/microVM sandbox。
-- Secrets vault 與 short-lived credentials。
-- Distributed tracing。
-- Dashboard + alerting。
-- Browser replay UI。
-- Policy-as-code 與 rule version audit。
+- Kubernetes manifests / Helm chart；
+- worker autoscaling；
+- Redis locks/dedupe/rate limiting；
+- DLQ 與 replay tooling；
+- gVisor/Kata/microVM sandbox；
+- secrets vault 與 short-lived credentials；
+- distributed tracing；
+- Dashboard + alerting；
+- browser replay UI；
+- policy-as-code 與 rule version audit。

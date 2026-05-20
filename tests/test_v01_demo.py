@@ -62,7 +62,13 @@ def test_serialize_task_includes_artifacts_summary():
                 artifact_type="screenshot",
                 uri="/data/artifacts/2026/05/16/task/screenshot-a.png",
                 sha256="abc123",
-                metadata={"media_type": "image/png"},
+                metadata={
+                    "media_type": "image/png",
+                    "content_type": "image/png",
+                    "size_bytes": 256,
+                    "backend": "local",
+                    "redaction": {"status": "not_applied", "strategy": "noop"},
+                },
                 created_at=now,
             )
         ],
@@ -77,7 +83,19 @@ def test_serialize_task_includes_artifacts_summary():
             "artifact_type": "screenshot",
             "uri": "/data/artifacts/2026/05/16/task/screenshot-a.png",
             "sha256": "abc123",
-            "metadata": {"media_type": "image/png"},
+            "content_type": "image/png",
+            "size_bytes": 256,
+            "backend": "local",
+            "retention": None,
+            "redaction": {"status": "not_applied", "strategy": "noop"},
+            "redaction_status": "not_applied",
+            "metadata": {
+                "media_type": "image/png",
+                "content_type": "image/png",
+                "size_bytes": 256,
+                "backend": "local",
+                "redaction": {"status": "not_applied", "strategy": "noop"},
+            },
             "created_at": now.isoformat(),
             "download_url": f"/v1/artifacts/{artifact_id}/content",
         }
@@ -102,10 +120,12 @@ def test_demo_route_renders_console():
     response = client.get("/demo")
 
     assert response.status_code == 200
-    assert "Browser Agent v0.2 Dashboard" in response.text
+    assert "Browser Agent v0.3 Dashboard" in response.text
     assert "https://example.com" in response.text
     assert "Audit Timeline" in response.text
     assert "Metrics" in response.text
+    assert "Artifact Query" in response.text
+    assert "redaction status" in response.text
 
 
 def test_task_list_api_returns_recent_task_summaries():

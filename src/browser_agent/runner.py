@@ -61,12 +61,13 @@ class TaskRunner:
         )
 
         for artifact in result.artifacts:
+            artifact_metadata = _artifact_metadata(artifact)
             self.session.add(models.TaskArtifact(
                 task_id=task.id,
                 artifact_type=artifact["type"],
                 uri=artifact["uri"],
                 sha256=artifact.get("sha256"),
-                metadata_={"media_type": _artifact_media_type(artifact["type"])},
+                metadata_=artifact_metadata,
             ))
             write_audit(
                 self.session,
@@ -79,6 +80,10 @@ class TaskRunner:
                     "artifact_type": artifact["type"],
                     "uri": artifact["uri"],
                     "sha256": artifact.get("sha256"),
+                    "content_type": artifact_metadata.get("content_type"),
+                    "size_bytes": artifact_metadata.get("size_bytes"),
+                    "backend": artifact_metadata.get("backend"),
+                    "redaction": artifact_metadata.get("redaction"),
                     "correlation_id": task.correlation_id,
                 },
             )
@@ -149,3 +154,15 @@ def _artifact_media_type(artifact_type: str) -> str:
     if artifact_type == "html":
         return "text/html; charset=utf-8"
     return "application/octet-stream"
+
+
+def _artifact_metadata(artifact: dict) -> dict:
+    metadata = dict(artifact.get("metadata") or {})
+    content_type = artifact.get("content_type") or metadata.get("content_type") or _artifact_media_type(artifact["type"])
+    metadata["content_type"] = content_type
+    metadata["media_type"] = content_type
+    metadata["size_bytes"] = artifact.get("size_bytes", metadata.get("size_bytes"))
+    metadata["backend"] = artifact.get("backend", metadata.get("backend", "local"))
+    metadata.setdefault("retention", {"policy": "default", "expires_at": None})
+    metadata.setdefault("redaction", {"status": "not_applied", "strategy": "noop"})
+    return metadata

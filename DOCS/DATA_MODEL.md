@@ -1,7 +1,6 @@
 # Data Model
 
-資料模型由 `sql/schema.sql`、`src/browser_agent/models.py` 與 Alembic initial migration
-描述。v0.2 實作以 SQLAlchemy ORM 為主要來源。
+Data model 定義在 `sql/schema.sql`、`src/browser_agent/models.py` 與 initial Alembic migration。SQLAlchemy ORM 是目前 application behavior 的主要來源。
 
 ## ERD
 
@@ -18,23 +17,27 @@ erDiagram
     tasks ||--o{ approvals : approved_by
 ```
 
-## Main Tables
+## Tables
 
 ### `tenants`
 
-租戶主檔。目前 API 尚未從 request/auth 判定 tenant，而是使用固定 demo UUID：
-`00000000-0000-0000-0000-000000000001`。
+Tenant records。本機 API 使用固定 demo tenant：
+
+```text
+00000000-0000-0000-0000-000000000001
+```
 
 ### `users`
 
-使用者主檔。目前 API 尚未實作正式登入，`created_by` 與 `approved_by` 使用固定
-demo user UUID：`00000000-0000-0000-0000-000000000002`。
+User records。本機 API 使用固定 demo user：
+
+```text
+00000000-0000-0000-0000-000000000002
+```
 
 ### `tasks`
 
-任務主表。
-
-v0.2 實際使用狀態：
+目前 statuses：
 
 - `created`
 - `pending_approval`
@@ -47,53 +50,53 @@ v0.2 實際使用狀態：
 
 重要欄位：
 
-- `risk_level`：`high/critical` 會進入 `pending_approval`。
-- `metadata`：存放 `domains`, `start_url`, `expected_domain`, `policy`, `plan`, `browser_result`, `evaluation`, `error` 等。
-- `correlation_id`：由 `X-Correlation-ID` 或 API 產生 UUID。
-- `approved_by`：保存 demo user UUID。
+- `risk_level`：high/critical tasks 需要 approval。
+- `metadata`：儲存 domains、start URL、expected domain、policy decision、plan、browser result、evaluation、error metadata。
+- `correlation_id`：由 `X-Correlation-ID` 複製，或由 API 產生。
+- `approved_by`：approval 後儲存 demo user UUID。
 
 ### `task_steps`
 
-`TaskRunner` 依 planner output 建立 steps。目前會建立 step rows，但尚未在每個
-Playwright action 後逐步更新 `status/output_data/error_message`。
+`TaskRunner` 會根據 planner output 建立 rows。Step execution status/output 目前仍是 minimal。
 
 ### `task_artifacts`
 
-`TaskRunner` 在 screenshot/html artifact 寫入 local filesystem 後，同步新增
-artifact row。
+`TaskRunner` 會為每個 screenshot 或 HTML artifact 建立一筆 row。
 
-目前保存：
+核心欄位：
 
 - `artifact_type`
 - `uri`
 - `sha256`
-- `metadata.media_type`
+- `metadata`
 - `created_at`
 
-`GET /v1/tasks/{task_id}` 會回傳 artifact summary，`GET /v1/artifacts/{artifact_id}/content`
-會確認 path 位於 `ARTIFACT_BASE_PATH` 內後提供內容。
+v0.3 metadata convention：
+
+```json
+{
+  "backend": "local",
+  "content_type": "image/png",
+  "size_bytes": 18002,
+  "retention": {"policy": "default", "expires_at": null},
+  "redaction": {"status": "not_applied", "strategy": "noop"},
+  "media_type": "image/png"
+}
+```
+
+`GET /v1/tasks/{task_id}` 會把這些欄位 serialize 到 artifact summary。`GET /v1/artifacts/{artifact_id}/content` 會檢查 tenant 與 local base path 後才 serve file。
 
 ### `evaluations`
 
-Evaluator 會保存：
-
-- `evaluator_ver`
-- `score`
-- `verdict`
-- `checks`
-
-目前簡化評分包含 final URL、HTML、artifacts 與 expected domain。
+儲存 evaluator version、score、verdict、check details。目前 checks 覆蓋 final URL、HTML capture、artifact presence、expected domain。
 
 ### `approvals`
 
-保存 approval display label 與 note。
-
-- `tasks.approved_by`：user UUID。
-- `approvals.approved_by`：顯示用 actor label，例如 `ops@example.com`。
+儲存 approval display label 與 note。`tasks.approved_by` 儲存 demo user UUID，`approvals.approved_by` 儲存像 `ops@example.com` 這類 label。
 
 ### `audit_logs`
 
-保存 lifecycle audit events。v0.2 已覆蓋：
+目前 lifecycle events 包含：
 
 - `task.created`
 - `task.pending_approval`
@@ -109,28 +112,11 @@ Evaluator 會保存：
 
 ## Seed Data
 
-`scripts/bootstrap.py` 會建立 demo tenant/user：
+`scripts/bootstrap.py` 會為 local Docker Compose runs 建立 demo tenant/user 與 Kafka topics。
 
-```sql
-INSERT INTO tenants (id, name, status)
-VALUES ('00000000-0000-0000-0000-000000000001', 'default', 'active')
-ON CONFLICT (id) DO NOTHING;
+## 後續改進
 
-INSERT INTO users (id, tenant_id, email, role)
-VALUES (
-  '00000000-0000-0000-0000-000000000002',
-  '00000000-0000-0000-0000-000000000001',
-  'ops@example.com',
-  'admin'
-)
-ON CONFLICT (tenant_id, email) DO NOTHING;
-```
-
-## Next Improvements
-
-- 正式 auth/RBAC 上線後，將固定 UUID 改為 token claims。
-- 補 status enum/constraint。
-- 補 idempotency key unique index。
-- 補 correlation ID index。
-- 擴充 `task_artifacts` retention、content length、tenant-scoped access control。
-
+- 以 auth/RBAC token claims 取代 demo UUIDs。
+- 加入更嚴格的 status constraints 與 indexes。
+- 加入 idempotency key uniqueness。
+- 如有需要，為完整 S3/MinIO artifact backend 增補 tables/metadata。
