@@ -1,42 +1,55 @@
-# Browser Agent 專案文件索引
+# BrowserAgent 文件總覽
 
-更新日期：2026-05-15
+更新日期：2026-05-20
 
-本目錄整理目前 `BrowserAgent` 專案的架構、執行方式、維運 runbook、API、資料模型、治理邊界與 roadmap。文件依據目前 repo 內容建立，並刻意區分「已實作」、「部分實作」與「尚未實作」。
+本目錄整理 `BrowserAgent` 專案目前的架構、API、資料模型、設定、維運方式、
+安全政策、可觀測性、應用場景與 roadmap。文件內容已對齊目前程式碼與本機
+Docker Compose 端到端驗證結果。
 
 ## 專案定位
 
-`BrowserAgent` 是一個企業級 Browser Agent 平台 scaffold。它以 FastAPI 作為 control plane，PostgreSQL 作為 system of record，Kafka 作為事件匯流排，worker 透過 Playwright 執行受控瀏覽器任務，並用 evaluator 對執行結果評分。
+`BrowserAgent` 是企業級 Browser Agent 平台的 production-grade scaffold。它提供
+FastAPI control plane、PostgreSQL system of record、Kafka event bus、Playwright
+worker、policy gate、approval flow、artifact persistence、evaluation、metrics 與
+audit trail。
 
-目前 repo 更接近可驗證的後端骨架與本機 compose demo，而不是完整 production 產品。已包含任務 API、SkillHub、policy gate、Kafka worker、Playwright runner、artifact 本地寫入、SQL schema、Alembic migration skeleton 與少量單元測試。
+目前完成到 v0.2 completion/stabilization：
 
-## 文件地圖
+- allowlisted low/medium task 會進入 `pending_approval`。
+- high/critical risk task 會進入 `pending_approval`，不再永久 `blocked`。
+- sensitive instruction 會進入 `pending_approval`。
+- blocked-domain task 會進入 `blocked`。
+- approval 後 task 會進入 `queued`，由 worker 透過 Kafka 消費並執行。
+- `/demo` 已是本機 v0.2 Dashboard，可觀察 tasks、metrics、audit、steps、evaluation 與 artifacts。
 
-| 文件 | 用途 |
+## 文件索引
+
+| 文件 | 說明 |
 |---|---|
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | 系統架構、模組責任、事件流程與目前限制 |
-| [API.md](./API.md) | FastAPI 端點、request/response 與 curl 範例 |
-| [DATA_MODEL.md](./DATA_MODEL.md) | PostgreSQL schema、資料關係與狀態欄位 |
-| [CONFIGURATION.md](./CONFIGURATION.md) | 環境變數、Docker Compose、topic 與 artifact 設定 |
-| [DEVELOPMENT.md](./DEVELOPMENT.md) | 本機開發、測試、格式檢查與常見開發注意事項 |
-| [RUNBOOK.md](./RUNBOOK.md) | 啟動、健康檢查、任務驗證、故障排查與操作流程 |
-| [SECURITY_AND_POLICY.md](./SECURITY_AND_POLICY.md) | allowlist、prompt injection 檢查、approval 與安全缺口 |
-| [OBSERVABILITY.md](./OBSERVABILITY.md) | logs、metrics、health checks、audit 與待補監控 |
-| [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) | 已實作/部分實作/未實作功能清單 |
-| [ROADMAP.md](./ROADMAP.md) | 建議演進路線與里程碑 |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | 系統架構、runtime components、task lifecycle |
+| [API.md](./API.md) | FastAPI endpoints、request/response、Dashboard API |
+| [DATA_MODEL.md](./DATA_MODEL.md) | PostgreSQL schema、主要資料表、資料流 |
+| [CONFIGURATION.md](./CONFIGURATION.md) | 環境變數、Docker Compose、Kafka topics、artifact 設定 |
+| [DEVELOPMENT.md](./DEVELOPMENT.md) | 本機開發、測試、常用指令 |
+| [RUNBOOK.md](./RUNBOOK.md) | Docker Compose 啟動、Dashboard 驗證、常見問題 |
+| [SECURITY_AND_POLICY.md](./SECURITY_AND_POLICY.md) | allowlist、prompt injection、approval policy、安全限制 |
+| [OBSERVABILITY.md](./OBSERVABILITY.md) | health checks、metrics、logs、audit、Dashboard 觀察 |
+| [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) | 已實作與尚未實作功能清單 |
+| [ROADMAP.md](./ROADMAP.md) | v0.3 之後的實作方向 |
+| [USE_CASES.md](./USE_CASES.md) | 專案主要作用與實際應用場景 |
 
-## 快速閱讀順序
+## 建議閱讀順序
 
-1. 先讀 [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md)，避免誤把 scaffold 當成完整平台。
-2. 再讀 [ARCHITECTURE.md](./ARCHITECTURE.md)，建立系統與資料流視角。
-3. 若要啟動專案，讀 [RUNBOOK.md](./RUNBOOK.md) 與 [CONFIGURATION.md](./CONFIGURATION.md)。
-4. 若要擴充功能，讀 [DATA_MODEL.md](./DATA_MODEL.md)、[SECURITY_AND_POLICY.md](./SECURITY_AND_POLICY.md) 與 [ROADMAP.md](./ROADMAP.md)。
+1. 先讀 [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md)，確認目前完成度。
+2. 再讀 [ARCHITECTURE.md](./ARCHITECTURE.md)，理解 control plane / data plane。
+3. 要本機驗證時讀 [RUNBOOK.md](./RUNBOOK.md) 與 [API.md](./API.md)。
+4. 要規劃下一版時讀 [ROADMAP.md](./ROADMAP.md) 與 [USE_CASES.md](./USE_CASES.md)。
 
-## 重要現況提醒
+## 目前注意事項
 
-- 工作目錄目前不是 git repo。
-- API 使用固定 tenant/user UUID，但 schema 有 foreign key；若資料庫沒有 seed 這兩筆資料，建立 task 會失敗。
-- `Dockerfile` 會在 build 階段安裝 Playwright Chromium；第一次 build 會下載瀏覽器 runtime，時間較久。
-- `metrics.py` 定義了 Prometheus counters/histogram，但目前核心流程沒有更新這些 metrics。
-- `docker-compose.yml` 有 MinIO，但目前 artifact store 實作是本地檔案寫入，尚未使用 MinIO client。
-- `scripts/create_topics.sh` 預設 `KAFKA_CONTAINER=kafka`；Docker Compose 實際 container 名稱可能不同。
+- API 仍使用固定 demo tenant/user UUID，正式 auth/RBAC 放在 v0.5。
+- Docker Compose 已包含 MinIO，但目前 artifact store 仍寫入本地 volume。
+- `/metrics` 是 process-local；在 Docker Compose 多 process 架構下，API endpoint 不會自動匯總 worker process 的 metrics。
+- `MAX_TASK_RETRIES` 與 `TASK_TIMEOUT_SECONDS` 已在 Settings 定義，但 worker retry 目前仍是 hardcoded minimal implementation。
+- `scripts/bootstrap.py` 是建立 schema、seed demo identity 與 Kafka topics 的主要路徑。
+

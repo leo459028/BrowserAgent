@@ -1,100 +1,86 @@
-# 開發指南
+# Development
 
-## 技術棧
+## Tech Stack
 
-- Python 3.12+
+- Python 3.12+ in Docker image
 - FastAPI
 - Pydantic v2 / pydantic-settings
 - SQLAlchemy 2.x
 - PostgreSQL 16
 - Kafka via `confluent-kafka`
-- Redis client package 已安裝但目前未使用
+- Redis client package
 - Playwright sync API
 - Prometheus client
 - Alembic
 - pytest
 
-## 安裝
+注意：本機 `.venv` 目前可用 Python 3.11 跑測試，但 `pyproject.toml` 與 Dockerfile
+目標是 Python 3.12+。
 
-本機 Python 環境：
+## Local Setup
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-```
-
-若要執行 browser runner，還需要安裝 Playwright browser：
-
-```powershell
 python -m playwright install chromium
 ```
 
-## 執行測試
+## Tests
+
+Windows 建議使用：
 
 ```powershell
-$env:PYTHONPATH = "src"
-pytest -q
+$env:PYTHONPATH = "src;."
+.\.venv\Scripts\python.exe -m pytest
 ```
 
 目前測試覆蓋：
 
-- `tests/test_policy.py`：未 allowlist domain 會被 policy 擋下。
-- `tests/test_evaluator.py`：有 final URL、HTML、artifact、expected domain 時 evaluator 通過。
+- `tests/test_policy.py`：allowlist policy。
+- `tests/test_evaluator.py`：final URL、HTML、artifact、expected domain evaluator。
+- `tests/test_v01_demo.py`：approval demo UUID/label、artifact serialization、Dashboard route、task list API、audit API。
+- `tests/test_v02_lifecycle.py`：pending approval、blocked domain、high-risk approval、sensitive approval、queued approval、failed metadata/audit。
+- `tests/test_worker_runner.py`：worker retry/backoff 與 failed marking。
 
-建議新增測試：
-
-- API create task 成功與 blocked cases。
-- fixed tenant/user seed 缺失時的明確錯誤。
-- approval 欄位型別修正後的 approval flow。
-- BrowserRunner allowlist blocking。
-- Worker 對 approved/created/blocked/completed status 的處理。
-- Artifact row 寫入與 checksum。
-
-## 執行 API
+## Run API Locally
 
 ```powershell
-$env:PYTHONPATH = "src"
-uvicorn browser_agent.app:app --reload --host 0.0.0.0 --port 8000
+$env:PYTHONPATH = "src;."
+.\.venv\Scripts\python.exe -m uvicorn browser_agent.app:app --reload --host 0.0.0.0 --port 8000
 ```
 
-或使用 Makefile：
+Dashboard:
 
-```powershell
-make run
+```text
+http://localhost:8000/demo
 ```
 
-在 Windows 沒有 make 時，直接使用 uvicorn 指令。
+## Docker Compose
 
-## 格式/靜態檢查
-
-目前 `Makefile` 的 `fmt` 與 `lint` 都是 compileall：
+完整本機 stack：
 
 ```powershell
-python -m compileall src tests worker alembic
+docker compose up --build -d
 ```
 
-這只能檢查語法，不會做格式化或 lint。建議後續引入：
+端到端驗證請參考 [RUNBOOK.md](./RUNBOOK.md)。
 
-- `ruff`：lint + import sorting
-- `black` 或 ruff format：格式化
-- `mypy` 或 pyright：型別檢查
+## DB Migration
 
-## DB migration
-
-Alembic 設定在 `alembic.ini`，預設連到 localhost：
+Alembic 設定在 `alembic.ini`。本機直接跑時需確認 `sqlalchemy.url` 指向可連線 DB。
 
 ```powershell
-$env:PYTHONPATH = "src"
+$env:PYTHONPATH = "src;."
 alembic upgrade head
 ```
 
-Compose 內 API/worker 使用 `postgres` hostname；本機 alembic 使用 localhost。若在不同環境執行，需確認 `sqlalchemy.url` 或環境變數一致。
+Compose 主要透過 `scripts/bootstrap.py` 建立 schema 與 seed demo identity。
 
-## 開發注意事項
+## Development Notes
 
-- 不要把藍圖中的完整狀態機當成已實作；目前狀態流較短。
-- 不要直接假設 Redis/MinIO 已接上核心流程；目前只是 compose/config 存在。
-- 修改 approval 時，維持 `tasks.approved_by` 保存 user UUID、`approvals.approved_by` 保存顯示 label 的分工。
-- 修改 Dockerfile 時，保留 Playwright browser install，否則 worker 很可能無法啟動 Chromium。
-- 新增任何 task lifecycle 事件時，同步更新 Kafka topics、runbook、observability 與 tests。
+- 不要假設 Redis/MinIO 已接核心流程；目前主要是 compose/config 存在。
+- 修改 approval 時，維持 `tasks.approved_by` 保存 user UUID、`approvals.approved_by` 保存顯示 label。
+- 修改 lifecycle 時，同步更新 Kafka topics、runbook、observability 與 tests。
+- `/metrics` 目前是 process-local；Docker Compose 下 API 不會自動匯總 worker metrics。
+
