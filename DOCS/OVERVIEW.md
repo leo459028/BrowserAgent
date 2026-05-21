@@ -1,38 +1,38 @@
-# BrowserAgent 文件總覽
+# Overview
 
-最後更新：2026-05-21
+`BrowserAgent` 是 enterprise browser agent platform 的 production-grade scaffold。此版本已完成 v0.5 Auth/RBAC 與 Production Approval：API 使用本機 JWT 建立 request-scoped actor，並以 creator、approver、operator、admin 控制 task creation、approval、metrics、SkillHub registration 與 artifact access。
 
-`BrowserAgent` 是 enterprise browser agent platform 的 production-grade scaffold。此版本已完成 v0.4 Planner/SkillHub Dashboard implementation slice：task lifecycle、approval、observability、artifact governance、Planner schema validation、deterministic fallback，以及 SkillHub resolver metadata 都已可透過 API 與 `/demo` Dashboard 驗證。
+## 版本重點
 
-## 目前完成範圍
-
-- v0.1：Docker Compose demo stack、API、worker、Playwright browser task、screenshot/HTML artifacts。
+- v0.1：可執行的 Docker Compose demo stack。
 - v0.2：task lifecycle、policy decision、approval flow、audit logs、metrics、Dashboard。
-- v0.3：artifact backend abstraction、local artifact governance metadata、no-op redaction hook、tenant-scoped artifact access checks、Artifact Query UI。
-- v0.4：Planner output validation、invalid output fallback、SkillHub resolver metadata、Planner/SkillHub Dashboard panel、Normal/Fallback/SkillHub E2E 測試。
+- v0.3：artifact backend abstraction、local artifact governance metadata、no-op redaction hook、tenant-scoped artifact access checks。
+- v0.4：Planner output validation、invalid output fallback、SkillHub resolver metadata、Planner/SkillHub Dashboard panel。
+- v0.5：local JWT auth、request-scoped tenant/user context、RBAC、production approval audit、v0.5 Dashboard identity panel。
 
-## 文件列表
+## 文件索引
 
 | 文件 | 內容 |
 |---|---|
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | Runtime architecture、components、lifecycle、Planner/SkillHub flow、known gaps |
-| [API.md](./API.md) | FastAPI endpoints、request/response shape、Planner metadata、artifact access、Skill API |
-| [DATA_MODEL.md](./DATA_MODEL.md) | ORM/schema model、task metadata convention、Planner/SkillHub metadata、artifact metadata |
-| [CONFIGURATION.md](./CONFIGURATION.md) | Environment variables、Docker Compose services、Kafka topics、artifact paths |
-| [DEVELOPMENT.md](./DEVELOPMENT.md) | 本機開發、測試命令、Docker 測試、常見注意事項 |
-| [RUNBOOK.md](./RUNBOOK.md) | Docker Compose 操作、Dashboard 測試、API E2E、troubleshooting |
-| [SECURITY_AND_POLICY.md](./SECURITY_AND_POLICY.md) | Instruction scan、policy、approval、artifact access、Planner/SkillHub 安全邊界 |
-| [OBSERVABILITY.md](./OBSERVABILITY.md) | Health checks、metrics、audit events、Dashboard 可觀測項目 |
-| [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) | 已完成項目與尚未完成項目 |
-| [TEST_REPORT.md](./TEST_REPORT.md) | Host、Docker、Dashboard、E2E 實際測試結果 |
-| [ROADMAP.md](./ROADMAP.md) | v0.1 到 v1.0 的版本路線 |
-| [USE_CASES.md](./USE_CASES.md) | 目前可展示與驗證的技術使用情境 |
+| [README.md](../README.md) | 一般版與技術版入口 |
+| [API.md](./API.md) | Auth、task、approval、artifact、skill API |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Control plane、data plane、governance layer、Auth/RBAC flow |
+| [CONFIGURATION.md](./CONFIGURATION.md) | Environment variables、Docker Compose、Auth settings |
+| [DATA_MODEL.md](./DATA_MODEL.md) | SQLAlchemy model、JWT actor、task metadata、approval/audit fields |
+| [SECURITY_AND_POLICY.md](./SECURITY_AND_POLICY.md) | Auth/RBAC、policy、approval、artifact access、Planner/SkillHub 邊界 |
+| [RUNBOOK.md](./RUNBOOK.md) | 本機與 Docker smoke test 流程 |
+| [USE_CASES.md](./USE_CASES.md) | Normal/Fallback/SkillHub/RBAC/Artifact 情境 |
+| [OBSERVABILITY.md](./OBSERVABILITY.md) | Health、metrics、logging、audit |
+| [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) | 已完成與尚未完成項目 |
+| [ROADMAP.md](./ROADMAP.md) | 版本規劃 |
+| [TEST_REPORT.md](./TEST_REPORT.md) | 實際測試結果 |
 
-## 重要限制
+## 目前限制
 
-- API auth/RBAC 尚未實作；目前使用固定 demo tenant/user UUID。
-- `/demo` 是本機測試 Dashboard，不是 production operator UI。
-- Planner 仍是 heuristic，不接外部 LLM。
-- SkillHub v0.4 只做 capability resolution metadata，不執行第三方 skill。
-- Active artifact backend 仍是 local filesystem；MinIO 目前在 Compose 中提供，但程式尚未把 artifacts upload 到 MinIO。
-- `/metrics` 是 process-local；API `/metrics` 不包含 worker process counters。
+- v0.5 使用本機 JWT，不接真實外部 OIDC/JWKS。
+- `/demo` 是本機測試 Dashboard，不是正式 production operator UI。
+- Planner 仍是 heuristic，不接外部 LLM provider。
+- SkillHub 只做 capability resolution metadata，不執行第三方 skill。
+- Artifact active backend 仍是 local filesystem。
+- Metrics 為 process-local。
+- Worker retry、DLQ、任務重播、擴充部署仍待加強。

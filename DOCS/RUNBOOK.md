@@ -1,6 +1,6 @@
 # Runbook
 
-本 runbook 說明如何在本機 Docker Compose 驗證 v0.4 Dashboard、Planner/SkillHub、artifact governance 與 E2E flow。Production 仍需要正式 auth/RBAC、secret management、object storage backend、retry/DLQ hardening 與更強的 browser sandbox isolation。
+本 runbook 說明如何在本機 Docker Compose 驗證 v0.5 Auth/RBAC、Production Approval、Planner/SkillHub、artifact governance 與 E2E flow。Production 仍需要外部 OIDC/JWKS、secret management、object storage backend、retry/DLQ hardening 與更強的 browser sandbox isolation。
 
 ## 1. 啟動 Stack
 
@@ -9,11 +9,11 @@ copy .env.example .env
 docker compose up -d --build
 ```
 
-`api` 與 `worker` services 啟動時會先執行 `python scripts/bootstrap.py`。Bootstrap 會：
+`api` 與 `worker` services 啟動時會執行：
 
 - 建立 SQLAlchemy schema。
-- seed demo tenant/user。
-- 建立 Kafka topics：`agent.tasks.created`、`agent.tasks.queued`、`agent.tasks.failed`、`agent.tasks.completed`。
+- seed demo tenant/users。
+- 建立 Kafka topics。
 
 檢查 service status：
 
@@ -26,7 +26,6 @@ docker compose ps
 ```powershell
 curl.exe http://127.0.0.1:8000/healthz
 curl.exe http://127.0.0.1:8000/readyz
-curl.exe http://127.0.0.1:8000/metrics
 ```
 
 預期：
@@ -36,7 +35,7 @@ curl.exe http://127.0.0.1:8000/metrics
 {"status":"ready"}
 ```
 
-## 2. 開啟 v0.4 Dashboard
+## 2. 開啟 v0.5 Dashboard
 
 ```text
 http://127.0.0.1:8000/demo
@@ -44,38 +43,42 @@ http://127.0.0.1:8000/demo
 
 Dashboard scenarios：
 
-- `Normal planner task`：預期先進入 `pending_approval`，approval 後 queued，由 worker 執行並產生 screenshot/html artifacts。
-- `Fallback planner task`：預期 invalid Planner output 被記錄，並使用 deterministic fallback plan。
+- `Identity / RBAC`：切換 role、查看 token actor 與 permissions。
+- `Try operator create`：預期顯示 `403`，因 operator 不可建立 task。
+- `Normal planner task`：creator 建立，approver 核准，worker 完成，產生 screenshot/html artifacts。
+- `Fallback planner task`：invalid Planner output 轉 deterministic fallback。
 - `SkillHub resolved task`：先按 `Register demo skills`，再建立 task，預期 `browser.goto` 與 `browser.screenshot` resolved。
-- `SkillHub missing task`：未註冊對應 skill 時，預期繼續使用 builtin browser action fallback。
-- `Redaction metadata task`：預期 artifacts 具備 redaction metadata。
-- `High-risk task`：預期 `pending_approval`，並有 high-risk policy reason。
-- `Sensitive instruction task`：預期 `pending_approval`，並有 sensitive-action policy reason。
+- `SkillHub missing task`：未註冊對應 skill 時，預期使用 builtin browser action fallback。
+- `High-risk task`：預期 `pending_approval`，policy reason 是 high-risk。
+- `Sensitive instruction task`：預期 `pending_approval`，policy reason 是 sensitive-action。
 - `Blocked-domain task`：預期 `blocked`。
 
 正常 allowlisted low-risk task 顯示 `pending_approval` 是預期行為；Planner metadata 會在 approval 後由 worker 執行時才出現。
 
-## 3. 測試命令
+## 3. Auth Smoke Test
 
-Host：
-
-```powershell
-pytest -q
-python -m compileall src tests worker alembic
-git diff --check
-```
-
-Docker：
+取得 creator token：
 
 ```powershell
-docker compose exec -T api pytest -q
+$creator = Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/v1/auth/demo-token `
+  -ContentType "application/json" `
+  -Body '{"role":"creator"}'
 ```
 
-目前預期 `pytest -q` 與 container pytest 都是 `31 passed`。
+確認 actor：
+
+```powershell
+Invoke-RestMethod -Method Get `
+  -Uri http://127.0.0.1:8000/v1/auth/me `
+  -Headers @{ Authorization = "Bearer $($creator.access_token)" }
+```
+
+預期 `email=creator@example.com`，roles 包含 `creator`。
 
 ## 4. Normal Planner API E2E
 
-建立 allowlisted task：
+建立 task：
 
 ```powershell
 $body = @{
@@ -92,6 +95,7 @@ $body = @{
 
 $created = Invoke-RestMethod -Method Post `
   -Uri http://127.0.0.1:8000/v1/tasks `
+  -Headers @{ Authorization = "Bearer $($creator.access_token)" } `
   -ContentType "application/json" `
   -Body $body
 ```
@@ -99,9 +103,15 @@ $created = Invoke-RestMethod -Method Post `
 Approve：
 
 ```powershell
-$approval = @{ approved_by = "ops@example.com"; note = "local v0.4 test" } | ConvertTo-Json
+$approver = Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/v1/auth/demo-token `
+  -ContentType "application/json" `
+  -Body '{"role":"approver"}'
+
+$approval = @{ note = "local v0.5 test" } | ConvertTo-Json
 Invoke-RestMethod -Method Post `
   -Uri "http://127.0.0.1:8000/v1/tasks/$($created.task_id)/approve" `
+  -Headers @{ Authorization = "Bearer $($approver.access_token)" } `
   -ContentType "application/json" `
   -Body $approval
 ```
@@ -109,7 +119,14 @@ Invoke-RestMethod -Method Post `
 查詢 task：
 
 ```powershell
-Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8000/v1/tasks/$($created.task_id)"
+$operator = Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/v1/auth/demo-token `
+  -ContentType "application/json" `
+  -Body '{"role":"operator"}'
+
+Invoke-RestMethod -Method Get `
+  -Uri "http://127.0.0.1:8000/v1/tasks/$($created.task_id)" `
+  -Headers @{ Authorization = "Bearer $($operator.access_token)" }
 ```
 
 預期：
@@ -117,56 +134,57 @@ Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8000/v1/tasks/$($created.ta
 - final status：`completed`。
 - `metadata.planner.valid=true`。
 - `metadata.planner.fallback_used=false`。
-- `steps` 有 `goto` 與 `screenshot`。
-- artifacts 有 `screenshot` 與 `html`。
-- evaluation verdict 是 `pass`。
+- `steps` 包含 `goto` 與 `screenshot`。
+- artifacts 包含 `screenshot` 與 `html`。
+- evaluation verdict 為 `pass`。
 
-## 5. Fallback Planner E2E
+## 5. RBAC Regression
 
-在 task metadata 加入：
+Operator 建立 task 應回 `403`：
 
-```json
-{"planner_test": "invalid"}
+```powershell
+Invoke-WebRequest -Method Post `
+  -Uri http://127.0.0.1:8000/v1/tasks `
+  -Headers @{ Authorization = "Bearer $($operator.access_token)" } `
+  -ContentType "application/json" `
+  -Body $body
 ```
 
-預期：
-
-- final status：`completed`。
-- `metadata.planner.valid=false`。
-- `metadata.planner.fallback_used=true`。
-- `metadata.planner.validation_errors` 有錯誤摘要。
-- `metadata.plan` 是 `goto,screenshot`。
-- audit timeline 有 `task.plan_fallback_used`。
+Creator approve task 應回 `403`。
 
 ## 6. Artifact Content
 
-取得 artifact content：
+讀取 artifact content：
 
 ```powershell
-curl.exe http://127.0.0.1:8000/v1/artifacts/<ARTIFACT_ID>/content
+curl.exe http://127.0.0.1:8000/v1/artifacts/<ARTIFACT_ID>/content `
+  -H "Authorization: Bearer <TOKEN>"
 ```
 
 預期：
 
-- screenshot endpoint 回傳 `200 image/png`。
-- HTML endpoint 回傳 `200 text/html; charset=utf-8`。
-- tenant mismatch 或 path traversal 回傳 `403`。
-- missing file 回傳 `404`。
+- screenshot endpoint 回 `200 image/png`。
+- HTML endpoint 回 `200 text/html; charset=utf-8`。
+- tenant mismatch 或 path traversal 回 `403`。
+- missing file 回 `404`。
 
-## 7. Kafka Topics
+## 7. 測試命令
 
-列出 topics：
+Host：
 
 ```powershell
-docker compose exec kafka kafka-topics --bootstrap-server kafka:9092 --list
+pytest -q
+python -m compileall src tests worker alembic
+git diff --check
 ```
 
-預期 topics：
+Docker：
 
-- `agent.tasks.created`
-- `agent.tasks.queued`
-- `agent.tasks.failed`
-- `agent.tasks.completed`
+```powershell
+docker compose exec -T api pytest -q
+```
+
+目前 host pytest 預期為 `39 passed`；最新實測請看 [TEST_REPORT.md](./TEST_REPORT.md)。
 
 ## 8. Troubleshooting
 
@@ -178,40 +196,29 @@ docker compose logs postgres
 docker compose exec postgres pg_isready -U agent -d agent
 ```
 
-### API bootstrap 等不到 Kafka
+### API bootstrap 等 Kafka
 
-若 Kafka log 出現 stale broker session，例如 `NodeExistsException`，先不刪 volume，重啟相關服務：
+若 Kafka log 顯示 stale broker session，例如 `NodeExistsException`，可先嘗試：
 
 ```powershell
 docker compose restart zookeeper kafka api worker
 ```
 
-### `POST /v1/tasks` 出現 foreign key errors
+### `401 Unauthorized`
 
-重新執行 bootstrap：
+確認有帶：
 
-```powershell
-docker compose exec api python scripts/bootstrap.py
+```text
+Authorization: Bearer <JWT>
 ```
 
-### Task 卡在 `queued`
+或重新呼叫 `/v1/auth/demo-token` 取得 token。
 
-檢查 approval、Kafka、worker：
+### `403 insufficient role`
 
-```powershell
-docker compose logs worker
-docker compose exec kafka kafka-topics --bootstrap-server kafka:9092 --list
-curl.exe http://127.0.0.1:8000/v1/tasks/<TASK_ID>
-```
+確認 role 是否符合 endpoint：
 
-### Artifact content 回傳 `403 outside artifact storage`
-
-確認目前呼叫的是寫入 artifact 的同一個 API process。如果 local uvicorn 與 Docker 都使用 port `8000`，測試 Docker 前請先停止 local uvicorn。
-
-### Worker Playwright failure
-
-重新 build image：
-
-```powershell
-docker compose build --no-cache api worker
-```
+- 建立 task：creator/admin。
+- 核准 task：approver/admin。
+- metrics：operator/admin。
+- 建立 skill：admin。

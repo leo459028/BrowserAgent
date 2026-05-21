@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 import browser_agent.api as api
 from browser_agent import models
 from browser_agent.api import create_app, resolve_artifact_file_path, serialize_task
+from browser_agent.auth import create_access_token, demo_actor_for_role
 from browser_agent.orchestrator import Orchestrator
 
 
@@ -120,7 +121,10 @@ def test_demo_route_renders_console():
     response = client.get("/demo")
 
     assert response.status_code == 200
-    assert "Browser Agent v0.4 Dashboard" in response.text
+    assert "Browser Agent v0.5 Dashboard" in response.text
+    assert "Identity / RBAC" in response.text
+    assert "production approval" in response.text
+    assert "Try operator create" in response.text
     assert "https://example.com" in response.text
     assert "Audit Timeline" in response.text
     assert "Metrics" in response.text
@@ -150,7 +154,7 @@ def test_task_list_api_returns_recent_task_summaries():
     session = _FakeQuerySession(tasks=[task])
     app.dependency_overrides[api.get_session] = lambda: session
 
-    response = TestClient(app).get("/v1/tasks")
+    response = TestClient(app).get("/v1/tasks", headers=_auth("operator"))
 
     assert response.status_code == 200
     assert response.json() == [
@@ -185,7 +189,7 @@ def test_task_audit_api_returns_lifecycle_events():
     session = _FakeQuerySession(audits=[audit])
     app.dependency_overrides[api.get_session] = lambda: session
 
-    response = TestClient(app).get(f"/v1/tasks/{task_id}/audit")
+    response = TestClient(app).get(f"/v1/tasks/{task_id}/audit", headers=_auth("operator"))
 
     assert response.status_code == 200
     assert response.json() == [
@@ -244,3 +248,8 @@ class _FakeQueryResult:
 
     def all(self):
         return self.rows
+
+
+def _auth(role: str) -> dict:
+    token = create_access_token(demo_actor_for_role(role))
+    return {"Authorization": f"Bearer {token}"}

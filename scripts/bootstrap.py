@@ -3,8 +3,10 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from datetime import datetime, timezone
 
 from confluent_kafka.admin import AdminClient, NewTopic
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from browser_agent.config import get_settings
@@ -14,6 +16,12 @@ from browser_agent import models  # noqa: F401
 DEFAULT_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 DEFAULT_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
 DEFAULT_USER_EMAIL = "ops@example.com"
+DEMO_USERS = [
+    (DEFAULT_USER_ID, DEFAULT_USER_EMAIL, "admin"),
+    (uuid.UUID("00000000-0000-0000-0000-000000000003"), "creator@example.com", "creator"),
+    (uuid.UUID("00000000-0000-0000-0000-000000000004"), "approver@example.com", "approver"),
+    (uuid.UUID("00000000-0000-0000-0000-000000000005"), "operator@example.com", "operator"),
+]
 
 TOPICS = [
     "agent.tasks.created",
@@ -38,22 +46,41 @@ def wait_for_database(max_attempts: int = 30, delay_seconds: float = 2.0):
 def seed_demo_identity() -> None:
     session: Session = get_session_factory()()
     try:
-        tenant = session.get(models.Tenant, DEFAULT_TENANT_ID)
-        if not tenant:
-            session.add(models.Tenant(
-                id=DEFAULT_TENANT_ID,
-                name="default",
-                status="active",
-            ))
+        created_at = datetime.now(timezone.utc)
+        session.execute(
+            text("""
+                INSERT INTO tenants (id, name, status, created_at)
+                VALUES (:id, :name, :status, :created_at)
+                ON CONFLICT (id) DO UPDATE
+                SET name = EXCLUDED.name,
+                    status = EXCLUDED.status
+            """),
+            {
+                "id": DEFAULT_TENANT_ID,
+                "name": "default",
+                "status": "active",
+                "created_at": created_at,
+            },
+        )
 
-        user = session.get(models.User, DEFAULT_USER_ID)
-        if not user:
-            session.add(models.User(
-                id=DEFAULT_USER_ID,
-                tenant_id=DEFAULT_TENANT_ID,
-                email=DEFAULT_USER_EMAIL,
-                role="admin",
-            ))
+        for user_id, email, role in DEMO_USERS:
+            session.execute(
+                text("""
+                    INSERT INTO users (id, tenant_id, email, role, created_at)
+                    VALUES (:id, :tenant_id, :email, :role, :created_at)
+                    ON CONFLICT (id) DO UPDATE
+                    SET tenant_id = EXCLUDED.tenant_id,
+                        email = EXCLUDED.email,
+                        role = EXCLUDED.role
+                """),
+                {
+                    "id": user_id,
+                    "tenant_id": DEFAULT_TENANT_ID,
+                    "email": email,
+                    "role": role,
+                    "created_at": created_at,
+                },
+            )
 
         session.commit()
     except Exception:

@@ -4,9 +4,9 @@
 
 | Endpoint | 說明 |
 |---|---|
-| `GET /healthz` | API process health |
-| `GET /readyz` | 執行 database `select(1)` readiness check |
-| `GET /metrics` | 回傳目前 process 的 Prometheus exposition text |
+| `GET /healthz` | API process health，公開 |
+| `GET /readyz` | 執行 database `select(1)` readiness check，公開 |
+| `GET /metrics` | Prometheus exposition text，需要 operator/admin token |
 
 ## Logging
 
@@ -17,6 +17,8 @@
 - `task_id`
 - `tenant_id`
 - `correlation_id`
+- `actor_email`
+- `actor_roles`
 - `worker_id`
 - `step_no`
 - `action_type`
@@ -37,7 +39,7 @@
 
 ## Audit Log
 
-`audit_logs` 會保存 task lifecycle 與 v0.4 Planner/SkillHub events。
+`audit_logs` 會保存 task lifecycle、approval actor 與 Planner/SkillHub events。
 
 目前可能出現的 events：
 
@@ -55,14 +57,23 @@
 - `task.review_required`
 - `task.failed`
 
-`GET /v1/tasks/{task_id}/audit` 回傳單一 task 的 audit timeline，Dashboard 的 `Audit Timeline` panel 也會顯示。
+v0.5 approval audit payload 會包含：
+
+- `actor_user_id`
+- `actor_email`
+- `actor_roles`
+- `correlation_id`
+
+`GET /v1/tasks/{task_id}/audit` 需要 approver/operator/admin token。Dashboard 的 `Audit Timeline` panel 會用 operator token 顯示。
 
 ## Dashboard
 
-`GET /demo` 是本機 v0.4 Dashboard，可觀察：
+`GET /demo` 是本機 v0.5 Dashboard，可觀察：
 
+- Identity/RBAC actor 與 permissions。
+- operator forbidden create scenario。
 - API health/readiness。
-- task creation 與 approval。
+- task creation 與 production approval。
 - Normal/Fallback/SkillHub/Policy scenarios。
 - recent tasks 與 status flow。
 - API process metrics。
@@ -79,6 +90,8 @@
 |---|---|
 | API down | `/healthz` failing |
 | DB not ready | `/readyz` failing |
+| Auth errors spike | `401` rate 異常升高 |
+| RBAC denied spike | `403` rate 異常升高 |
 | Worker not consuming | queued tasks 長時間未被消費 |
 | Kafka unavailable | API/worker bootstrap 等待 Kafka 或 producer/consumer 連線失敗 |
 | High failure rate | `failed` / `review` status rate |

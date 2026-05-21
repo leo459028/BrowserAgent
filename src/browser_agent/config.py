@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     app_env: str = "local"
     app_log_level: str = "INFO"
     app_secret_key: str = "change-me"
+    auth_enabled: bool = True
+    auth_jwt_issuer: str = "browser-agent-local"
+    auth_jwt_audience: str = "browser-agent-api"
+    auth_token_ttl_seconds: int = 3600
+    auth_demo_tokens_enabled: bool = True
 
     database_url: str = "postgresql+psycopg://agent:agent@localhost:5432/agent"
     redis_url: str = "redis://localhost:6379/0"
