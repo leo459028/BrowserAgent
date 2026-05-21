@@ -11,6 +11,8 @@ from .services.browser import BrowserRunner
 from .services.tasks import set_task_status, set_task_status_with_audit, add_step
 from .services.artifacts import build_artifact_store
 from .llm import HeuristicPlanner
+from .planner import build_planner_metadata
+from .skillhub import SkillHub
 
 class TaskRunner:
     def __init__(self, session: Session, artifact_base_path: str, headless: bool, allowed_domains: set[str]):
@@ -28,7 +30,57 @@ class TaskRunner:
             "risk_level": task.risk_level,
             "metadata": task.metadata_,
         })
-        task.metadata_ = {**(task.metadata_ or {}), "plan": plan["steps"]}
+        planner_metadata = build_planner_metadata(
+            plan,
+            {
+                "title": task.title,
+                "risk_level": task.risk_level,
+                "metadata": task.metadata_,
+            },
+        )
+        resolved_plan = resolve_plan_step_skills(
+            planner_metadata["plan"],
+            tenant_id=task.tenant_id,
+            skillhub=SkillHub(self.session),
+        )
+        unresolved_skills = [
+            step["skill"]["name"]
+            for step in resolved_plan
+            if not step.get("skill", {}).get("resolved")
+        ]
+        planner_metadata["plan"] = resolved_plan
+        planner_metadata["planner"]["skill_resolution"] = {
+            "unresolved": unresolved_skills,
+            "unresolved_count": len(unresolved_skills),
+        }
+        task.metadata_ = {**(task.metadata_ or {}), **planner_metadata}
+        if planner_metadata["planner"]["fallback_used"]:
+            write_audit(
+                self.session,
+                task.tenant_id,
+                "worker",
+                "task.plan_fallback_used",
+                "task",
+                str(task.id),
+                {
+                    "validation_errors": planner_metadata["planner"]["validation_errors"],
+                    "correlation_id": task.correlation_id,
+                },
+            )
+        if unresolved_skills:
+            write_audit(
+                self.session,
+                task.tenant_id,
+                "worker",
+                "task.skill_resolution",
+                "task",
+                str(task.id),
+                {
+                    "resolved": False,
+                    "unresolved": unresolved_skills,
+                    "correlation_id": task.correlation_id,
+                },
+            )
         set_task_status_with_audit(
             self.session,
             task,
@@ -39,7 +91,7 @@ class TaskRunner:
         task.started_at = datetime.now(timezone.utc)
         self.session.add(task)
 
-        for i, step in enumerate(plan["steps"], start=1):
+        for i, step in enumerate(resolved_plan, start=1):
             add_step(
                 self.session,
                 task=task,
@@ -166,3 +218,29 @@ def _artifact_metadata(artifact: dict) -> dict:
     metadata.setdefault("retention", {"policy": "default", "expires_at": None})
     metadata.setdefault("redaction", {"status": "not_applied", "strategy": "noop"})
     return metadata
+
+
+def resolve_plan_step_skills(steps: list[dict], *, tenant_id, skillhub: SkillHub) -> list[dict]:
+    resolved_steps = []
+    for step in steps:
+        action = step["action"]
+        skill_name = f"browser.{action}"
+        requested_version = step.get("skill_version")
+        skill = skillhub.resolve(tenant_id, skill_name, requested_version)
+        resolved = dict(step)
+        if skill:
+            resolved["skill"] = {
+                "name": skill.name,
+                "version": skill.version,
+                "entrypoint": skill.entrypoint,
+                "resolved": True,
+            }
+        else:
+            resolved["skill"] = {
+                "name": skill_name,
+                "version": requested_version,
+                "entrypoint": f"builtin.browser.{action}",
+                "resolved": False,
+            }
+        resolved_steps.append(resolved)
+    return resolved_steps

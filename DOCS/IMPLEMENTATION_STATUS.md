@@ -1,96 +1,114 @@
 # Implementation Status
 
-最後更新：2026-05-20
+最後更新：2026-05-21
 
-## 目前狀態
+## 總覽
 
-Repository 目前已實作到 v0.3。它仍是 production-grade scaffold，不是完整 production product。
+Repository 目前已完成 v0.4 implementation slice。這仍是 production-grade scaffold，不是完整 production product；尚未接入正式 auth/RBAC、外部 LLM、Kubernetes、DLQ 或 production artifact object storage。
 
-已實作：
-
-- v0.2 task lifecycle、approval policy、observability、audit coverage、metrics、worker execution、本機 Dashboard。
-- v0.3 artifact governance：storage abstraction、local backend metadata、no-op redaction hook、tenant-scoped artifact access、governed artifact URL、Dashboard artifact query/testing UI。
-
-## 已實作 Components
+## 已完成 Components
 
 - FastAPI app factory 與 router。
 - `/healthz`、`/readyz`、`/metrics`。
-- `POST /v1/tasks`。
-- `GET /v1/tasks`。
-- `GET /v1/tasks/{task_id}`。
+- `POST /v1/tasks`、`GET /v1/tasks`、`GET /v1/tasks/{task_id}`。
 - `GET /v1/tasks/{task_id}/audit`。
 - `POST /v1/tasks/{task_id}/approve`。
 - `GET /v1/artifacts/{artifact_id}/content`。
 - `POST /v1/skills`、`GET /v1/skills`。
-- SQLAlchemy ORM models。
-- SQL schema 與 Alembic initial migration skeleton。
+- SQLAlchemy ORM models 與 Alembic initial migration skeleton。
 - Kafka producer/consumer wrapper。
-- Worker consumer loop。
+- Worker consumer loop 與 retry handling。
 - Playwright browser runner。
-- Heuristic planner。
+- Heuristic Planner。
+- v0.4 Planner schema validation 與 deterministic fallback。
+- SkillHub registration 與 resolver metadata integration。
 - Evaluator。
-- Local artifact store with governance metadata。
-- Artifact redaction hook interface 與 default no-op implementation。
+- Local artifact store 與 governance metadata。
+- Artifact redaction hook interface，預設為 no-op。
 - JSON logging。
 - Docker Compose local stack。
-- `/demo` v0.3 Dashboard。
+- `/demo` v0.4 Dashboard。
 - Bootstrap script：schema、demo tenant/user、Kafka topics。
 - API 支援 `X-Correlation-ID`。
 
-## v0.2 行為
+## v0.4 Planner Metadata
 
-- Allowlisted low/medium tasks 進入 `pending_approval`。
-- High/critical risk tasks 進入 `pending_approval`。
-- Sensitive instructions 進入 `pending_approval`。
-- Non-allowlisted domains 進入 `blocked`。
-- 類 prompt-injection instructions 以 `400` 拒絕。
-- Approval 將 task 移到 `queued`。
-- Worker 消費 `queued` tasks，並移到 `executing`。
-- Evaluation 成功時 task 變成 `completed`；較弱的 evaluation 變成 `review`。
-- Execution exceptions 會讓 task 變成 `failed`，並寫入 error metadata。
-- Lifecycle audit 覆蓋 created、pending approval、blocked、approved、queued、execution started、artifact written、evaluated、completed/review required、failed。
+`TaskRunner` 會先呼叫 `HeuristicPlanner.plan()`，再用 `build_planner_metadata()` 驗證輸出。metadata 寫入 `tasks.metadata`：
 
-## v0.3 行為
+```json
+{
+  "planner": {
+    "version": "heuristic-v0.4",
+    "valid": true,
+    "source": "heuristic",
+    "validation_errors": [],
+    "fallback_used": false,
+    "fallback_source": null,
+    "skill_resolution": {
+      "unresolved": ["browser.goto"],
+      "unresolved_count": 1
+    }
+  },
+  "plan": [
+    {
+      "action": "goto",
+      "url": "https://example.com",
+      "skill": {
+        "name": "browser.goto",
+        "version": null,
+        "entrypoint": "builtin.browser.goto",
+        "resolved": false
+      }
+    }
+  ]
+}
+```
 
-- `ArtifactStore` protocol 定義 backend behavior。
-- `LocalArtifactStore` 寫入 artifacts，並回傳 SHA-256、content type、size、backend、retention、redaction metadata。
-- `NoopArtifactRedactor` 記錄 redaction hook status，但不修改 bytes。
-- `TaskRunner` 持久化 artifact governance metadata，並把它放入 artifact audit payloads。
-- `GET /v1/tasks/{task_id}` serialize artifact governance fields。
-- `GET /v1/artifacts/{artifact_id}/content` 會檢查 tenant 與 local storage base path 後才回傳 content。
-- `/demo` 顯示 artifact table、metadata JSON、preview/open links、access-check button。
+若 Planner output invalid，runner 會：
+- 使用 deterministic fallback plan。
+- 寫入 `planner.valid=false`。
+- 寫入 `planner.validation_errors`。
+- 寫入 `planner.fallback_used=true`。
+- 產生 `task.plan_fallback_used` audit event。
 
-## v0.3 Dashboard
+## SkillHub Integration 現況
 
-`GET /demo` 可以：
+v0.4 將 browser action 視為 SkillHub capability：
+- `browser.goto`
+- `browser.click`
+- `browser.fill`
+- `browser.press`
+- `browser.wait`
+- `browser.extract_text`
+- `browser.screenshot`
 
-- 建立 normal artifact task；
-- 建立 redaction metadata task；
-- 建立 high-risk 與 sensitive-instruction tasks；
-- 建立 blocked-domain tasks；
-- approve pending tasks；
-- 顯示 recent tasks、status flow、metrics、audit、steps、evaluation、artifacts；
-- 檢視 artifact content type、size、SHA、backend、redaction status、metadata；
-- 從 UI 測試 artifact content access。
+若 `SkillHub.resolve()` 找到 active skill，step `input_data.skill.resolved=true`。若找不到，step 繼續使用 builtin browser action，並標示 `resolved=false`。此版本不執行第三方 skill，也不新增工具執行器。
 
-## 尚待實作
+## Dashboard 現況
 
-- Formal OIDC/JWT auth 與 RBAC。
+`GET /demo` 顯示 `Browser Agent v0.4 Dashboard`，可執行：
+- normal planner task。
+- fallback planner task。
+- SkillHub resolved task。
+- SkillHub missing task。
+- redaction metadata task。
+- high-risk、sensitive instruction、blocked-domain task。
+- approval、runtime health、metrics、audit timeline、steps、evaluation、artifact preview、Artifact Query。
+
+## 尚未完成
+
+- OIDC/JWT auth 與 RBAC。
 - Request-scoped tenant/user context。
-- Planner output schema validation。
-- SkillHub resolver integration with planner/runner。
+- 外部 LLM provider integration。
+- 真正執行第三方 SkillHub tool。
 - Per-action confirmation。
-- Redis locks/rate limiting/dedupe。
+- Redis locks、rate limiting、dedupe。
 - DLQ 與 poison message replay tooling。
 - Worker autoscaling。
-- 完整 MinIO/S3 artifact backend。
+- MinIO/S3 active artifact backend。
 - Browser session replay UI。
 - Kubernetes manifests。
 - CI pipeline。
 - Production secret management。
 - Distributed tracing。
-- Worker metrics endpoint 或 multiprocess metrics aggregation。
-
-## 建議下一步
-
-以獨立 implementation slice 開始 v0.4 Planner/SkillHub integration，並讓 v0.3 artifact governance 維持穩定底座。
+- Worker metrics endpoint 與 multiprocess metrics aggregation。

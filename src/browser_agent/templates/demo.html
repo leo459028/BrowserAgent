@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Browser Agent v0.3 Dashboard</title>
+  <title>Browser Agent v0.4 Dashboard</title>
   <style>
     :root {
       color-scheme: light;
@@ -197,11 +197,12 @@
   <main>
     <header>
       <div>
-        <h1>Browser Agent v0.3 Dashboard</h1>
-        <div class="muted">Local dashboard for lifecycle, approval, metrics, audit, and artifact governance.</div>
+        <h1>Browser Agent v0.4 Dashboard</h1>
+        <div class="muted">Local dashboard for lifecycle, approval, Planner validation, SkillHub resolution, metrics, audit, and artifact governance.</div>
       </div>
       <div class="toolbar">
         <button id="refresh" class="secondary">Refresh</button>
+        <button id="register-skills" class="secondary">Register demo skills</button>
         <button id="approve" disabled>Approve selected</button>
       </div>
     </header>
@@ -254,6 +255,21 @@
         </section>
 
         <section>
+          <h2>Planner / SkillHub</h2>
+          <div class="kv">
+            <div class="label">Version</div><div id="planner-version" class="value">-</div>
+            <div class="label">Source</div><div id="planner-source" class="value">-</div>
+            <div class="label">Validation</div><div><span id="planner-valid" class="status">idle</span></div>
+            <div class="label">Fallback</div><div><span id="planner-fallback" class="status">idle</span></div>
+            <div class="label">SkillHub</div><div id="skillhub-summary" class="value">-</div>
+          </div>
+          <h2 style="margin-top:16px">Planner validation errors</h2>
+          <pre id="planner-errors">[]</pre>
+          <h2 style="margin-top:16px">Resolved skills</h2>
+          <div id="resolved-skills" class="muted">No planner steps yet.</div>
+        </section>
+
+        <section>
           <h2>Status Flow</h2>
           <div id="status-flow" class="flow"></div>
         </section>
@@ -298,9 +314,37 @@
     const statuses = ["created", "pending_approval", "queued", "executing", "completed", "review", "failed", "blocked"];
     const scenarios = {
       allowlisted: {
-        label: "Normal artifact task",
-        help: "Expected: pending_approval, then queued after approval, then screenshot/html artifacts with v0.3 metadata.",
+        label: "Normal planner task",
+        help: "Expected: valid Planner output, pending_approval, then queued after approval, then screenshot/html artifacts.",
         payload: defaultPayload,
+      },
+      plannerFallback: {
+        label: "Fallback planner task",
+        help: "Expected: invalid Planner output is recorded, deterministic fallback uses start_url plus screenshot.",
+        payload: {
+          ...defaultPayload,
+          title: "Planner fallback verification",
+          metadata: {
+            ...defaultPayload.metadata,
+            planner_test: "invalid",
+          },
+        },
+      },
+      skillhubResolved: {
+        label: "SkillHub resolved task",
+        help: "Expected: after registering demo skills, browser.goto and browser.screenshot resolve through SkillHub.",
+        payload: {
+          ...defaultPayload,
+          title: "SkillHub resolved verification",
+        },
+      },
+      skillhubMissing: {
+        label: "SkillHub missing task",
+        help: "Expected: execution continues with builtin browser actions and unresolved SkillHub metadata is visible.",
+        payload: {
+          ...defaultPayload,
+          title: "SkillHub missing verification",
+        },
       },
       redaction: {
         label: "Redaction metadata task",
@@ -462,7 +506,7 @@
         await getJson(`/v1/tasks/${currentTaskId}/approve`, {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({approved_by: actor, note: "Approved from local v0.3 dashboard"}),
+          body: JSON.stringify({approved_by: actor, note: "Approved from local v0.4 dashboard"}),
         });
         await refreshTask();
         await refreshTasks();
@@ -513,9 +557,79 @@
       $("evaluation").textContent = JSON.stringify(task.metadata?.evaluation || {}, null, 2);
       $("approve").disabled = task.status !== "pending_approval";
       renderStatusFlow(task.status);
+      renderPlanner(task);
       renderSteps(task.steps || []);
       renderArtifacts(task.artifacts || []);
       refreshTasks();
+    }
+
+    async function registerDemoSkills() {
+      const skills = [
+        {
+          name: "browser.goto",
+          version: "1.0.0",
+          description: "Built-in browser goto action for v0.4 Dashboard testing.",
+          skill_type: "browser_action",
+          entrypoint: "browser.goto",
+          input_schema: {"type": "object", "required": ["url"]},
+          output_schema: {"type": "object"},
+          policy_tags: ["browser", "navigation"],
+        },
+        {
+          name: "browser.screenshot",
+          version: "1.0.0",
+          description: "Built-in browser screenshot action for v0.4 Dashboard testing.",
+          skill_type: "browser_action",
+          entrypoint: "browser.screenshot",
+          input_schema: {"type": "object"},
+          output_schema: {"type": "object"},
+          policy_tags: ["browser", "artifact"],
+        },
+      ];
+      $("register-skills").disabled = true;
+      try {
+        for (const skill of skills) {
+          await getJson("/v1/skills", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(skill),
+          });
+        }
+        $("scenario-help").textContent = "Demo SkillHub skills registered. Create or rerun the SkillHub resolved task.";
+      } catch (error) {
+        $("scenario-help").textContent = error.message;
+      } finally {
+        $("register-skills").disabled = false;
+      }
+    }
+
+    function renderPlanner(task) {
+      const planner = task.metadata?.planner || {};
+      $("planner-version").textContent = planner.version || "-";
+      $("planner-source").textContent = planner.source || "-";
+      setStatus("planner-valid", planner.valid === true ? "pass" : planner.valid === false ? "failed" : "idle");
+      setStatus("planner-fallback", planner.fallback_used ? "warn" : "pass");
+      $("planner-fallback").textContent = planner.fallback_used ? "fallback" : "not used";
+      $("planner-errors").textContent = JSON.stringify(planner.validation_errors || [], null, 2);
+      const resolution = planner.skill_resolution || {};
+      $("skillhub-summary").textContent = `unresolved=${resolution.unresolved_count ?? 0}`;
+      const steps = task.metadata?.plan || [];
+      if (!steps.length) {
+        $("resolved-skills").innerHTML = '<span class="muted">No planner steps yet.</span>';
+        return;
+      }
+      $("resolved-skills").innerHTML = `<table><thead><tr><th>Action</th><th>Name</th><th>Version</th><th>Entrypoint</th><th>Resolved</th></tr></thead><tbody>${steps.map((step) => {
+        const skill = step.skill || {};
+        return `
+          <tr>
+            <td>${escapeHtml(step.action || "-")}</td>
+            <td>${escapeHtml(skill.name || "-")}</td>
+            <td>${escapeHtml(skill.version || "-")}</td>
+            <td>${escapeHtml(skill.entrypoint || "-")}</td>
+            <td><span class="status ${skill.resolved ? "pass" : "warn"}">${skill.resolved ? "resolved" : "fallback"}</span></td>
+          </tr>
+        `;
+      }).join("")}</tbody></table>`;
     }
 
     function renderTaskList(tasks) {
@@ -670,6 +784,7 @@
     });
     $("scenario").addEventListener("change", renderScenario);
     $("create-task").addEventListener("click", createTask);
+    $("register-skills").addEventListener("click", registerDemoSkills);
     $("approve").addEventListener("click", approveSelected);
     $("refresh").addEventListener("click", refreshAll);
     $("artifact-select").addEventListener("change", () => renderArtifactQuery($("artifact-select").value));
