@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Browser Agent v0.4 Dashboard</title>
+  <title>Browser Agent v0.5 Dashboard</title>
   <style>
     :root {
       color-scheme: light;
@@ -197,8 +197,8 @@
   <main>
     <header>
       <div>
-        <h1>Browser Agent v0.4 Dashboard</h1>
-        <div class="muted">Local dashboard for lifecycle, approval, Planner validation, SkillHub resolution, metrics, audit, and artifact governance.</div>
+        <h1>Browser Agent v0.5 Dashboard</h1>
+        <div class="muted">Local dashboard for Identity/RBAC, production approval, Planner validation, SkillHub resolution, metrics, audit, and artifact governance.</div>
       </div>
       <div class="toolbar">
         <button id="refresh" class="secondary">Refresh</button>
@@ -224,8 +224,22 @@
           <div class="kv">
             <div class="label">Health</div><div><span id="health" class="status">checking</span></div>
             <div class="label">Ready</div><div><span id="ready" class="status">checking</span></div>
-            <div class="label">Actor</div><div class="value">{{ demo_actor }}</div>
+            <div class="label">Approval</div><div class="value">production approval uses authenticated actor</div>
             <div class="label">Target</div><div class="value">https://example.com</div>
+          </div>
+        </section>
+
+        <section>
+          <h2>Identity / RBAC</h2>
+          <div class="button-row">
+            <select id="active-role"></select>
+            <button id="forbidden-create" class="secondary">Try operator create</button>
+          </div>
+          <div class="kv" style="margin-top:12px">
+            <div class="label">Actor</div><div id="actor-email" class="value">-</div>
+            <div class="label">Roles</div><div id="actor-roles" class="value">-</div>
+            <div class="label">Permissions</div><div id="actor-permissions" class="value">-</div>
+            <div class="label">Last RBAC</div><div id="rbac-result" class="value">-</div>
           </div>
         </section>
 
@@ -309,7 +323,7 @@
   </main>
 
   <script>
-    const actor = {{ demo_actor | tojson }};
+    const demoRoles = {{ demo_roles | tojson }};
     const defaultPayload = {{ demo_payload | tojson }};
     const statuses = ["created", "pending_approval", "queued", "executing", "completed", "review", "failed", "blocked"];
     const scenarios = {
@@ -395,6 +409,9 @@
     let currentTaskId = null;
     let currentArtifacts = [];
     let pollTimer = null;
+    let activeRole = "creator";
+    const demoTokens = {};
+    const objectUrls = new Map();
 
     const $ = (id) => document.getElementById(id);
 
@@ -412,8 +429,41 @@
       el.className = "status " + String(value).toLowerCase();
     }
 
-    async function getJson(url, options) {
-      const response = await fetch(url, options);
+    async function ensureToken(role = activeRole) {
+      if (demoTokens[role]) return demoTokens[role];
+      const response = await fetch("/v1/auth/demo-token", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({role}),
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`${response.status} ${response.statusText}: ${text}`);
+      }
+      demoTokens[role] = await response.json();
+      return demoTokens[role];
+    }
+
+    async function authHeaders(role = activeRole, headers = {}) {
+      const token = await ensureToken(role);
+      return {...headers, "Authorization": `Bearer ${token.access_token}`};
+    }
+
+    async function refreshIdentity() {
+      try {
+        const actor = await getJson("/v1/auth/me", {}, activeRole);
+        $("actor-email").textContent = actor.email;
+        $("actor-roles").textContent = actor.roles.join(", ");
+        $("actor-permissions").textContent = actor.permissions.join(", ");
+      } catch (error) {
+        $("actor-email").textContent = error.message;
+      }
+    }
+
+    async function getJson(url, options = {}, role = activeRole) {
+      const {noAuth, ...fetchOptions} = options;
+      const headers = noAuth ? (fetchOptions.headers || {}) : await authHeaders(role, fetchOptions.headers || {});
+      const response = await fetch(url, {...fetchOptions, headers});
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`${response.status} ${response.statusText}: ${text}`);
@@ -421,8 +471,8 @@
       return response.json();
     }
 
-    async function getText(url) {
-      const response = await fetch(url);
+    async function getText(url, role = activeRole) {
+      const response = await fetch(url, {headers: await authHeaders(role)});
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`${response.status} ${response.statusText}: ${text}`);
@@ -444,13 +494,13 @@
 
     async function checkRuntime() {
       try {
-        await getJson("/healthz");
+        await getJson("/healthz", {noAuth: true});
         setStatus("health", "ready");
       } catch (error) {
         setStatus("health", "error");
       }
       try {
-        await getJson("/readyz");
+        await getJson("/readyz", {noAuth: true});
         setStatus("ready", "ready");
       } catch (error) {
         setStatus("ready", "error");
@@ -459,7 +509,7 @@
 
     async function refreshMetrics() {
       try {
-        $("metrics").textContent = await getText("/metrics");
+        $("metrics").textContent = await getText("/metrics", "operator");
       } catch (error) {
         $("metrics").textContent = error.message;
       }
@@ -467,7 +517,7 @@
 
     async function refreshTasks() {
       try {
-        const tasks = await getJson("/v1/tasks?limit=20");
+        const tasks = await getJson("/v1/tasks?limit=20", {}, "operator");
         renderTaskList(tasks);
         if (!currentTaskId && tasks.length) {
           currentTaskId = tasks[0].id;
@@ -486,7 +536,7 @@
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify(currentPayload()),
-        });
+        }, activeRole);
         currentTaskId = created.task_id;
         await refreshAll();
         await refreshTask();
@@ -506,8 +556,8 @@
         await getJson(`/v1/tasks/${currentTaskId}/approve`, {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({approved_by: actor, note: "Approved from local v0.4 dashboard"}),
-        });
+          body: JSON.stringify({note: "Approved from local v0.5 dashboard"}),
+        }, "approver");
         await refreshTask();
         await refreshTasks();
         startPolling();
@@ -523,7 +573,7 @@
 
     async function refreshTask() {
       if (!currentTaskId) return;
-      const task = await getJson(`/v1/tasks/${currentTaskId}`);
+      const task = await getJson(`/v1/tasks/${currentTaskId}`, {}, "operator");
       renderTask(task);
       await refreshAudit();
       await refreshMetrics();
@@ -535,7 +585,7 @@
     async function refreshAudit() {
       if (!currentTaskId) return;
       try {
-        const entries = await getJson(`/v1/tasks/${currentTaskId}/audit`);
+        const entries = await getJson(`/v1/tasks/${currentTaskId}/audit`, {}, "operator");
         renderAudit(entries);
       } catch (error) {
         $("audit").innerHTML = `<span class="error-text">${escapeHtml(error.message)}</span>`;
@@ -568,7 +618,7 @@
         {
           name: "browser.goto",
           version: "1.0.0",
-          description: "Built-in browser goto action for v0.4 Dashboard testing.",
+          description: "Built-in browser goto action for v0.5 Dashboard testing.",
           skill_type: "browser_action",
           entrypoint: "browser.goto",
           input_schema: {"type": "object", "required": ["url"]},
@@ -578,7 +628,7 @@
         {
           name: "browser.screenshot",
           version: "1.0.0",
-          description: "Built-in browser screenshot action for v0.4 Dashboard testing.",
+          description: "Built-in browser screenshot action for v0.5 Dashboard testing.",
           skill_type: "browser_action",
           entrypoint: "browser.screenshot",
           input_schema: {"type": "object"},
@@ -593,7 +643,7 @@
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify(skill),
-          });
+          }, "admin");
         }
         $("scenario-help").textContent = "Demo SkillHub skills registered. Create or rerun the SkillHub resolved task.";
       } catch (error) {
@@ -700,11 +750,11 @@
           <td>${escapeHtml(artifact.backend || "-")}</td>
           <td>${escapeHtml(artifact.redaction_status || artifact.redaction?.status || "-")}</td>
           <td>${escapeHtml(new Date(artifact.created_at).toLocaleTimeString())}</td>
-          <td><a href="${artifact.download_url}" target="_blank" rel="noreferrer">view</a></td>
+          <td><button class="secondary" data-artifact-id="${artifact.id}">check</button></td>
         </tr>
       `).join("");
       $("artifacts").innerHTML = `
-        ${screenshot ? `<img class="preview" src="${screenshot.download_url}" alt="Browser screenshot artifact">` : ""}
+        ${screenshot ? `<div id="screenshot-preview" class="muted">Loading screenshot preview...</div>` : ""}
         <table>
           <thead>
             <tr>
@@ -722,6 +772,14 @@
         </table>
       `;
       renderArtifactQuery(artifacts[0]?.id || null);
+      if (screenshot) renderScreenshotPreview(screenshot, "screenshot-preview");
+      $("artifacts").querySelectorAll("button[data-artifact-id]").forEach((button) => {
+        button.addEventListener("click", () => {
+          $("artifact-select").value = button.dataset.artifactId;
+          renderArtifactQuery(button.dataset.artifactId);
+          checkArtifactAccess();
+        });
+      });
     }
 
     function renderArtifactQuery(selectedId) {
@@ -739,9 +797,10 @@
       $("artifact-metadata").textContent = selected ? JSON.stringify(selected.metadata || {}, null, 2) : "{}";
       $("artifact-access").textContent = selected ? "Ready to test governed access." : "Select an artifact to test governed access.";
       if (selected?.artifact_type === "screenshot") {
-        $("artifact-preview").innerHTML = `<img class="preview" src="${selected.download_url}" alt="Selected screenshot artifact">`;
+        $("artifact-preview").innerHTML = `<div id="selected-screenshot-preview" class="muted">Loading screenshot preview...</div>`;
+        renderScreenshotPreview(selected, "selected-screenshot-preview");
       } else if (selected?.artifact_type === "html") {
-        $("artifact-preview").innerHTML = `<p><a href="${selected.download_url}" target="_blank" rel="noreferrer">Open HTML artifact</a></p>`;
+        $("artifact-preview").innerHTML = `<p class="muted">Use Check access to verify HTML artifact content.</p>`;
       } else {
         $("artifact-preview").innerHTML = "";
       }
@@ -756,7 +815,7 @@
       if (!artifact) return;
       $("artifact-access").textContent = "Checking access...";
       try {
-        const response = await fetch(artifact.download_url);
+        const response = await fetch(artifact.download_url, {headers: await authHeaders("operator")});
         if (!response.ok) {
           const text = await response.text();
           throw new Error(`${response.status} ${response.statusText}: ${text}`);
@@ -764,6 +823,33 @@
         $("artifact-access").textContent = `Access OK · ${response.headers.get("content-type") || artifact.content_type || "unknown content type"}`;
       } catch (error) {
         $("artifact-access").innerHTML = `<span class="error-text">${escapeHtml(error.message)}</span>`;
+      }
+    }
+
+    async function renderScreenshotPreview(artifact, elementId) {
+      try {
+        const response = await fetch(artifact.download_url, {headers: await authHeaders("operator")});
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+        const blob = await response.blob();
+        if (objectUrls.has(elementId)) URL.revokeObjectURL(objectUrls.get(elementId));
+        const url = URL.createObjectURL(blob);
+        objectUrls.set(elementId, url);
+        $(elementId).innerHTML = `<img class="preview" src="${url}" alt="Browser screenshot artifact">`;
+      } catch (error) {
+        $(elementId).innerHTML = `<span class="error-text">${escapeHtml(error.message)}</span>`;
+      }
+    }
+
+    async function tryForbiddenCreate() {
+      try {
+        await getJson("/v1/tasks", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(currentPayload()),
+        }, "operator");
+        $("rbac-result").textContent = "unexpected success";
+      } catch (error) {
+        $("rbac-result").textContent = error.message;
       }
     }
 
@@ -782,7 +868,19 @@
       option.textContent = scenario.label;
       $("scenario").append(option);
     });
+    demoRoles.forEach((role) => {
+      const option = document.createElement("option");
+      option.value = role;
+      option.textContent = role;
+      $("active-role").append(option);
+    });
+    $("active-role").value = activeRole;
     $("scenario").addEventListener("change", renderScenario);
+    $("active-role").addEventListener("change", async () => {
+      activeRole = $("active-role").value;
+      await refreshIdentity();
+    });
+    $("forbidden-create").addEventListener("click", tryForbiddenCreate);
     $("create-task").addEventListener("click", createTask);
     $("register-skills").addEventListener("click", registerDemoSkills);
     $("approve").addEventListener("click", approveSelected);
@@ -791,6 +889,7 @@
     $("artifact-check").addEventListener("click", checkArtifactAccess);
     renderScenario();
     renderStatusFlow("idle");
+    refreshIdentity();
     refreshAll();
   </script>
 </body>
