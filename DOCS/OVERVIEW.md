@@ -1,4 +1,4 @@
-# BrowserAgent 文件索引
+# BrowserAgent 文件總覽
 
 最後更新：2026-05-21
 
@@ -23,11 +23,10 @@
 | [RUNBOOK.md](./RUNBOOK.md) | Docker Compose 操作、Dashboard 測試、API E2E、troubleshooting |
 | [SECURITY_AND_POLICY.md](./SECURITY_AND_POLICY.md) | Instruction scan、policy、approval、artifact access、Planner/SkillHub 安全邊界 |
 | [OBSERVABILITY.md](./OBSERVABILITY.md) | Health checks、metrics、audit events、Dashboard 可觀測項目 |
-| [NON_TECHNICAL_OVERVIEW.md](./NON_TECHNICAL_OVERVIEW.md) | 給一般人看的白話說明、應用場景、不適合場景、特性與限制 |
 | [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) | 已完成項目與尚未完成項目 |
 | [TEST_REPORT.md](./TEST_REPORT.md) | Host、Docker、Dashboard、E2E 實際測試結果 |
 | [ROADMAP.md](./ROADMAP.md) | v0.1 到 v1.0 的版本路線 |
-| [USE_CASES.md](./USE_CASES.md) | 目前可展示與驗證的使用情境 |
+| [USE_CASES.md](./USE_CASES.md) | 目前可展示與驗證的技術使用情境 |
 
 ## 重要限制
 
