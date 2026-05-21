@@ -1,6 +1,6 @@
 # Data Model
 
-Data model 定義在 `sql/schema.sql`、`src/browser_agent/models.py` 與 initial Alembic migration。SQLAlchemy ORM 是目前 application behavior 的主要來源。
+資料模型以 [src/browser_agent/models.py](../src/browser_agent/models.py) 為準，`sql/schema.sql` 與 Alembic initial migration skeleton 是 scaffold 參考。v0.4 沒有新增資料表；Planner 與 SkillHub 資訊寫入 `tasks.metadata` 與 `task_steps.input_data`。
 
 ## ERD
 
@@ -17,27 +17,33 @@ erDiagram
     tasks ||--o{ approvals : approved_by
 ```
 
-## Tables
+## Demo Identity
 
-### `tenants`
-
-Tenant records。本機 API 使用固定 demo tenant：
+目前 API 使用固定 demo identity：
 
 ```text
-00000000-0000-0000-0000-000000000001
+tenant_id = 00000000-0000-0000-0000-000000000001
+actor_id  = 00000000-0000-0000-0000-000000000002
+actor label = ops@example.com
 ```
 
-### `users`
+`scripts/bootstrap.py` 會建立上述 tenant/user，並在 Docker Compose 中建立 Kafka topics。
 
-User records。本機 API 使用固定 demo user：
+## `tasks`
 
-```text
-00000000-0000-0000-0000-000000000002
-```
+主要欄位：
 
-### `tasks`
+- `tenant_id`：目前固定為 demo tenant。
+- `created_by`：目前固定為 demo user。
+- `title`、`instructions`、`priority`、`risk_level`。
+- `status`：task lifecycle 狀態。
+- `approved_by`、`approved_at`。
+- `planned_at`、`started_at`、`completed_at`。
+- `idempotency_key`：目前保留欄位，尚未實作去重邏輯。
+- `correlation_id`：來自 `X-Correlation-ID` 或 API 自動產生。
+- `metadata`：JSON metadata，是 v0.4 Planner/SkillHub 的主要儲存位置。
 
-目前 statuses：
+目前 status values：
 
 - `created`
 - `pending_approval`
@@ -48,22 +54,92 @@ User records。本機 API 使用固定 demo user：
 - `review`
 - `failed`
 
+## `tasks.metadata`
+
+常見結構：
+
+```json
+{
+  "domains": ["example.com"],
+  "start_url": "https://example.com",
+  "expected_domain": "example.com",
+  "policy": {
+    "decision": "allowed",
+    "reason": "allowed",
+    "requires_approval": false
+  },
+  "planner": {
+    "version": "heuristic-v0.4",
+    "valid": true,
+    "source": "heuristic",
+    "validation_errors": [],
+    "fallback_used": false,
+    "fallback_source": null,
+    "skill_resolution": {
+      "unresolved": ["browser.goto"],
+      "unresolved_count": 1
+    }
+  },
+  "plan": [
+    {
+      "action": "goto",
+      "url": "https://example.com",
+      "skill": {
+        "name": "browser.goto",
+        "version": null,
+        "entrypoint": "builtin.browser.goto",
+        "resolved": false
+      }
+    }
+  ],
+  "browser_result": {
+    "final_url": "https://example.com/",
+    "title": "Example Domain",
+    "observations": []
+  },
+  "evaluation": {
+    "score": 100.0,
+    "verdict": "pass",
+    "checks": {}
+  }
+}
+```
+
+Planner metadata 只會在 worker 執行 task 後出現；task 剛建立且仍在 `pending_approval` 時，Planner panel 仍可能顯示 idle。
+
+## `task_steps`
+
+`TaskRunner` 會將已驗證且已套用 SkillHub resolution 的 `plan` 寫成 steps。
+
 重要欄位：
 
-- `risk_level`：high/critical tasks 需要 approval。
-- `metadata`：儲存 domains、start URL、expected domain、policy decision、plan、browser result、evaluation、error metadata。
-- `correlation_id`：由 `X-Correlation-ID` 複製，或由 API 產生。
-- `approved_by`：approval 後儲存 demo user UUID。
+- `step_no`
+- `action_type`
+- `target`
+- `instruction`
+- `status`
+- `input_data`
+- `output_data`
+- `error_message`
 
-### `task_steps`
+v0.4 的 `input_data.skill` 範例：
 
-`TaskRunner` 會根據 planner output 建立 rows。Step execution status/output 目前仍是 minimal。
+```json
+{
+  "name": "browser.screenshot",
+  "version": "1.0.0",
+  "entrypoint": "browser.screenshot",
+  "resolved": true
+}
+```
 
-### `task_artifacts`
+若找不到 SkillHub skill，`resolved=false`，`entrypoint` 會是 `builtin.browser.<action>`。
 
-`TaskRunner` 會為每個 screenshot 或 HTML artifact 建立一筆 row。
+## `task_artifacts`
 
-核心欄位：
+`TaskRunner` 會為 screenshot 與 HTML artifact 建立 row。
+
+主要欄位：
 
 - `artifact_type`
 - `uri`
@@ -71,38 +147,58 @@ User records。本機 API 使用固定 demo user：
 - `metadata`
 - `created_at`
 
-v0.3 metadata convention：
+metadata convention：
 
 ```json
 {
   "backend": "local",
   "content_type": "image/png",
+  "media_type": "image/png",
   "size_bytes": 18002,
   "retention": {"policy": "default", "expires_at": null},
-  "redaction": {"status": "not_applied", "strategy": "noop"},
-  "media_type": "image/png"
+  "redaction": {"status": "not_applied", "strategy": "noop"}
 }
 ```
 
-`GET /v1/tasks/{task_id}` 會把這些欄位 serialize 到 artifact summary。`GET /v1/artifacts/{artifact_id}/content` 會檢查 tenant 與 local base path 後才 serve file。
+`GET /v1/tasks/{task_id}` 會 serialize artifact summary；`GET /v1/artifacts/{artifact_id}/content` 會檢查 tenant 與 local base path 後才 serve file。
 
-### `evaluations`
+## `skills`
 
-儲存 evaluator version、score、verdict、check details。目前 checks 覆蓋 final URL、HTML capture、artifact presence、expected domain。
+SkillHub 登錄的 capability 資料表。
 
-### `approvals`
+主要欄位：
 
-儲存 approval display label 與 note。`tasks.approved_by` 儲存 demo user UUID，`approvals.approved_by` 儲存像 `ops@example.com` 這類 label。
+- `name`：例如 `browser.goto`。
+- `version`：例如 `1.0.0`。
+- `description`
+- `skill_type`
+- `entrypoint`
+- `input_schema`
+- `output_schema`
+- `policy_tags`
+- `is_active`
 
-### `audit_logs`
+v0.4 runner 使用 `SkillHub.resolve()` 做 metadata resolution，不執行第三方 skill。
 
-目前 lifecycle events 包含：
+## `evaluations`
+
+儲存 evaluator version、score、verdict、check details。目前 evaluator 檢查 final URL、HTML capture、artifact presence、expected domain。
+
+## `approvals`
+
+儲存 approval display label 與 note。`tasks.approved_by` 是 demo user UUID；`approvals.approved_by` 是顯示用 label，例如 `ops@example.com`。
+
+## `audit_logs`
+
+目前 lifecycle 與 v0.4 events 包含：
 
 - `task.created`
 - `task.pending_approval`
 - `task.blocked`
 - `task.approved`
 - `task.queued`
+- `task.plan_fallback_used`
+- `task.skill_resolution`
 - `task.execution_started`
 - `task.artifact_written`
 - `task.evaluated`
@@ -110,13 +206,9 @@ v0.3 metadata convention：
 - `task.review_required`
 - `task.failed`
 
-## Seed Data
+## 尚未實作
 
-`scripts/bootstrap.py` 會為 local Docker Compose runs 建立 demo tenant/user 與 Kafka topics。
-
-## 後續改進
-
-- 以 auth/RBAC token claims 取代 demo UUIDs。
-- 加入更嚴格的 status constraints 與 indexes。
-- 加入 idempotency key uniqueness。
-- 如有需要，為完整 S3/MinIO artifact backend 增補 tables/metadata。
+- auth/RBAC claims 取代 demo UUID。
+- status constraints、indexes、idempotency unique constraint。
+- S3/MinIO active artifact backend metadata。
+- Planner output 與 SkillHub resolution 的獨立正規化資料表。
