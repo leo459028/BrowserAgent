@@ -120,12 +120,16 @@ def test_demo_route_renders_console():
     response = client.get("/demo")
 
     assert response.status_code == 200
-    assert "Browser Agent v0.3 Dashboard" in response.text
+    assert "Browser Agent v0.4 Dashboard" in response.text
     assert "https://example.com" in response.text
     assert "Audit Timeline" in response.text
     assert "Metrics" in response.text
     assert "Artifact Query" in response.text
     assert "redaction status" in response.text
+    assert "Planner" in response.text
+    assert "SkillHub" in response.text
+    assert "fallback" in response.text
+    assert "validation" in response.text
 
 
 def test_task_list_api_returns_recent_task_summaries():
