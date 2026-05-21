@@ -15,7 +15,15 @@ class Orchestrator:
         self.session = session
         self.bus = bus
 
-    def create_task(self, tenant_id, created_by, payload: dict, correlation_id: str | None = None) -> models.Task:
+    def create_task(
+        self,
+        tenant_id,
+        created_by,
+        payload: dict,
+        correlation_id: str | None = None,
+        actor_label: str | None = None,
+        actor_payload: dict | None = None,
+    ) -> models.Task:
         security = inspect_instructions(payload["instructions"])
         if not security.allowed:
             raise ValueError(security.reason)
@@ -39,11 +47,11 @@ class Orchestrator:
         write_audit(
             self.session,
             tenant_id,
-            str(created_by) if created_by else None,
+            actor_label or (str(created_by) if created_by else None),
             "task.created",
             "task",
             str(task.id),
-            {"correlation_id": correlation_id},
+            {"correlation_id": correlation_id, **(actor_payload or {})},
         )
 
         policy = evaluate_task_policy({
@@ -66,11 +74,12 @@ class Orchestrator:
                 task,
                 "blocked",
                 action="task.blocked",
-                actor=str(created_by) if created_by else None,
+                actor=actor_label or (str(created_by) if created_by else None),
                 payload={
                     "reason": policy.reason,
                     "policy": task.metadata_["policy"],
                     "correlation_id": correlation_id,
+                    **(actor_payload or {}),
                 },
             )
         else:
@@ -79,11 +88,12 @@ class Orchestrator:
                 task,
                 "pending_approval",
                 action="task.pending_approval",
-                actor=str(created_by) if created_by else None,
+                actor=actor_label or (str(created_by) if created_by else None),
                 payload={
                     "reason": policy.reason,
                     "policy": task.metadata_["policy"],
                     "correlation_id": correlation_id,
+                    **(actor_payload or {}),
                 },
             )
         self.session.flush()
@@ -104,6 +114,7 @@ class Orchestrator:
         approved_by_user_id: uuid.UUID,
         approved_by_label: str,
         note: str | None,
+        actor_payload: dict | None = None,
     ) -> models.Approval:
         if task.status not in APPROVABLE_STATUSES:
             raise ValueError(f"cannot approve task in status {task.status}")
@@ -120,7 +131,11 @@ class Orchestrator:
             "task.approved",
             "task",
             str(task.id),
-            {"note": note, "correlation_id": getattr(task, "correlation_id", None)},
+            {
+                "note": note,
+                "correlation_id": getattr(task, "correlation_id", None),
+                **(actor_payload or {}),
+            },
         )
         set_task_status(
             self.session,
@@ -135,7 +150,12 @@ class Orchestrator:
             "task.queued",
             "task",
             str(task.id),
-            {"note": note, "status": task.status, "correlation_id": getattr(task, "correlation_id", None)},
+            {
+                "note": note,
+                "status": task.status,
+                "correlation_id": getattr(task, "correlation_id", None),
+                **(actor_payload or {}),
+            },
         )
         self.session.flush()
         self.bus.publish("agent.tasks.queued", str(task.id), {
@@ -146,5 +166,6 @@ class Orchestrator:
             "approved_by": approved_by_label,
             "note": note,
             "correlation_id": getattr(task, "correlation_id", None),
+            **(actor_payload or {}),
         })
         return approval

@@ -4,47 +4,34 @@
 
 ## 摘要
 
-v0.4 Planner/SkillHub Dashboard 實作後，已完成 host 端單元、整合、compile、diff check、Docker container pytest、Docker API health/readiness、Dashboard smoke test，以及 Normal/Fallback/SkillHub resolved E2E。
+v0.5 Auth/RBAC 與 Production Approval 實作後，已完成 host 端 pytest、compileall、diff check、Docker Compose build/start、container pytest，以及 Docker API/Dashboard/RBAC/worker/artifact smoke test。
 
-## 文件同步檢查
+本次測試確認：
 
-2026-05-21 重新檢查所有 Markdown 文件後，已同步更新：
-
-- `README.md`
-- `DOCS/OVERVIEW.md`
-- `DOCS/API.md`
-- `DOCS/ARCHITECTURE.md`
-- `DOCS/CONFIGURATION.md`
-- `DOCS/DATA_MODEL.md`
-- `DOCS/DEVELOPMENT.md`
-- `DOCS/IMPLEMENTATION_STATUS.md`
-- `DOCS/OBSERVABILITY.md`
-- `DOCS/ROADMAP.md`
-- `DOCS/RUNBOOK.md`
-- `DOCS/SECURITY_AND_POLICY.md`
-- `DOCS/USE_CASES.md`
-- `scripts/README.md`
-
-文件掃描確認未殘留亂碼、舊版 Dashboard 標題、v0.4 未完成敘述、舊 Planner/SkillHub 狀態、舊測試數量等過期內容。同步後重新執行：
-
-```text
-pytest -q -> 31 passed, 2 warnings
-python -m compileall src tests worker alembic -> passed
-git diff --check -> passed
-docker compose exec -T api pytest -q -> 31 passed
-```
+- API 預設需要 Bearer token。
+- invalid/missing/expired token 回 `401`。
+- wrong role 回 `403`。
+- creator 可建立 task。
+- approver 可核准 task，audit actor 為 `approver@example.com`。
+- operator 可讀 metrics，不可建立 task。
+- admin 可註冊 SkillHub skill。
+- artifact content endpoint 使用 token tenant 做 access check。
+- `/demo` 顯示 `Browser Agent v0.5 Dashboard` 與 `Identity / RBAC` panel。
 
 ## Host 測試結果
+
+日期：2026-05-21
 
 ### `pytest -q`
 
 結果：
 
 ```text
-31 passed, 2 warnings in 1.49s
+39 passed, 2 warnings in 1.92s
 ```
 
 Warnings：
+
 - `pythonjsonlogger.jsonlogger` deprecation warning。
 - `.pytest_cache` 寫入 permission warning：測試結果通過，但 sandbox 無法寫入部分 pytest cache 檔案。
 
@@ -68,46 +55,46 @@ exit code 0
 
 表示目前 diff 沒有 trailing whitespace 或 patch 格式問題。
 
-### Targeted v0.4 tests
+## v0.5 Test Coverage
 
-Command：
-
-```powershell
-pytest tests\test_v04_planner.py tests\test_v04_skillhub.py tests\test_v01_demo.py -q
-```
-
-結果：
-
-```text
-13 passed, 2 warnings in 1.42s
-```
-
-## v0.4 Test Coverage
-
-### `tests/test_v04_planner.py`
+### `tests/test_v05_auth_rbac.py`
 
 覆蓋：
-- valid Planner output 通過 schema validation。
-- 每個 step 保留 JSON-serializable `input_data`。
-- 缺少必要欄位時記錄 validation error。
-- deterministic fallback 在有 `metadata.start_url` 時產生 `goto + screenshot`。
-- invalid Planner output 會讓 metadata 記錄 `fallback_used=true` 與錯誤摘要。
 
-### `tests/test_v04_skillhub.py`
+- missing token、invalid token、expired token 回 `401`。
+- operator 建立 task 回 `403`。
+- `/v1/auth/demo-token` 與 `/v1/auth/me` 回傳 actor 與 permissions。
+- creator 建立 task 時，`tenant_id` 與 `created_by` 來自 token actor。
+- creator 不可 approve；approver 可 approve。
+- approval row、audit payload、Kafka queued event 使用 authenticated actor。
+- operator 可讀 `/metrics`；creator 讀 `/metrics` 回 `403`。
+- admin 可註冊 SkillHub skill。
+- artifact content 使用 token tenant 做 access check，tenant mismatch 回 `403`。
 
-覆蓋：
-- active skill 可解析為 `resolved=true`。
-- step 指定 `skill_version` 時，resolver 使用指定版本。
-- 找不到 skill 時不阻止 step，並標示 builtin fallback metadata。
+### Updated regression tests
 
-### `tests/test_v01_demo.py`
-
-新增覆蓋：
-- `/demo` 顯示 `Browser Agent v0.4 Dashboard`。
-- Dashboard HTML 包含 `Planner`、`SkillHub`、`fallback`、`validation`。
-- 既有 artifact query、audit、metrics、task list API 測試維持通過。
+- `tests/test_v01_demo.py` 已更新為 v0.5 Dashboard rendering，並在 task list / audit API 測試中使用 Bearer token。
+- v0.1-v0.4 既有 tests 維持通過。
 
 ## Docker 驗證
+
+日期：2026-05-21
+
+### Docker availability
+
+第一次在 sandbox 內執行 `docker info` 因 Docker API permission 被擋：
+
+```text
+permission denied while trying to connect to the docker API
+```
+
+改用核准後的 Docker daemon access 執行成功：
+
+```text
+Server Version: 29.4.1
+Operating System: Docker Desktop
+OSType: linux
+```
 
 ### `docker compose up -d --build`
 
@@ -123,37 +110,85 @@ Container browseragent-api-1 Started
 Container browseragent-worker-1 Started
 ```
 
-第一次啟動後 Kafka 因 Zookeeper 舊 session 出現 `NodeExistsException`，API bootstrap 暫時等待 Kafka。未刪除任何 volume，執行：
+Build log 確認 `PyJWT-2.12.1` 已安裝進 container image。
 
-```powershell
-docker compose restart zookeeper kafka api worker
+### Bootstrap 問題與修正
+
+Docker 驗證第一次發現 `api` service 退出，原因是 API 與 worker 同時執行 `scripts/bootstrap.py`，新增多個 demo users 時發生 duplicate key race：
+
+```text
+psycopg.errors.UniqueViolation: duplicate key value violates unique constraint "users_pkey"
 ```
 
-重啟後 Kafka、API、worker 皆正常啟動。
+修正方式：
+
+- `scripts/bootstrap.py` 改用 PostgreSQL `INSERT ... ON CONFLICT` upsert seed demo tenant/users。
+
+第二次啟動又發現既有 Docker volume 的 `created_at` 欄位是 NOT NULL 且沒有 database-level default：
+
+```text
+psycopg.errors.NotNullViolation: null value in column "created_at" of relation "tenants"
+```
+
+修正方式：
+
+- upsert tenant/users 時明確提供 `created_at` timestamp。
+
+修正後重新執行：
+
+```text
+docker compose up -d --build -> exit code 0
+```
 
 ### `docker compose exec -T api pytest -q`
 
 結果：
 
 ```text
-31 passed in 1.17s
+39 passed in 1.68s
 ```
 
-### API readiness
+## Docker API / Dashboard / RBAC Smoke
 
-```powershell
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/healthz
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/readyz
-```
+執行項目：
+
+- `GET /healthz`
+- `GET /readyz`
+- `POST /v1/auth/demo-token` for creator / approver / operator / admin
+- `GET /v1/auth/me` with operator token
+- `GET /demo`
+- `GET /metrics` with operator token
+- operator `POST /v1/tasks` forbidden check
+- creator `POST /v1/tasks`
+- approver `POST /v1/tasks/{task_id}/approve`
+- polling operator `GET /v1/tasks/{task_id}`
+- operator `GET /v1/tasks/{task_id}/audit`
+- operator `GET /v1/artifacts/{artifact_id}/content`
 
 結果：
 
 ```json
-{"status":"ok"}
-{"status":"ready"}
+{
+  "health": "ok",
+  "ready": "ready",
+  "dashboardV05": true,
+  "identityPanel": true,
+  "operatorEmail": "operator@example.com",
+  "metricsStatus": 200,
+  "forbiddenCreateStatus": 403,
+  "createdStatus": "pending_approval",
+  "approvedStatus": "queued",
+  "finalStatus": "completed",
+  "plannerValid": true,
+  "fallbackUsed": false,
+  "artifactCount": 2,
+  "artifactStatus": 200,
+  "artifactContentType": "image/png",
+  "approvalActor": "approver@example.com"
+}
 ```
 
-## Dashboard Smoke Test
+## Dashboard 驗證結果
 
 HTTP 驗證：
 
@@ -164,118 +199,70 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/demo
 頁面文字檢查結果：
 
 ```text
-PASS Browser Agent v0.4 Dashboard
+PASS Browser Agent v0.5 Dashboard
+PASS Identity / RBAC
+PASS production approval
 PASS Planner
 PASS SkillHub
-PASS fallback
-PASS validation
 PASS Artifact Query
 ```
 
-Browser 插件驗證限制：
-- in-app Browser 開啟 `http://127.0.0.1:8000/demo` 時回報 `net::ERR_BLOCKED_BY_CLIENT`。
-- 改用 `http://localhost:8000/demo` 仍回報 `net::ERR_BLOCKED_BY_CLIENT`。
-- 因此本次 UI smoke test 以 FastAPI route test 與 HTTP HTML content check 作為證據。
+Dashboard artifact preview 在 v0.5 會透過 JS fetch 帶 operator token 讀取 content endpoint；直接用 `<img src="/v1/artifacts/...">` 已不再適用，因為 artifact endpoint 需要 Bearer token。
 
-## Docker E2E
+## 文件同步檢查
 
-### Normal planner task
+已同步更新：
 
-流程：
-- `POST /v1/tasks`
-- `POST /v1/tasks/{task_id}/approve`
-- polling `GET /v1/tasks/{task_id}`
-- 讀取 artifact content endpoint
+- `README.md`
+- `DOCS/OVERVIEW.md`
+- `DOCS/API.md`
+- `DOCS/ARCHITECTURE.md`
+- `DOCS/CONFIGURATION.md`
+- `DOCS/DATA_MODEL.md`
+- `DOCS/DEVELOPMENT.md`
+- `DOCS/IMPLEMENTATION_STATUS.md`
+- `DOCS/OBSERVABILITY.md`
+- `DOCS/ROADMAP.md`
+- `DOCS/RUNBOOK.md`
+- `DOCS/SECURITY_AND_POLICY.md`
+- `DOCS/TEST_REPORT.md`
+- `DOCS/USE_CASES.md`
 
-結果：
-
-```text
-final=completed
-planner_valid=True
-fallback=False
-unresolved=2
-steps=2
-artifacts=2
-artifact_types=screenshot,html
-evaluation=pass
-score=100.0
-screenshot content endpoint=200 image/png
-html content endpoint=200 text/html; charset=utf-8
-```
-
-此情境未先註冊 SkillHub demo skills，因此 `unresolved=2` 是預期結果；runner 使用 builtin browser action fallback。
-
-### Fallback planner task
-
-使用 `metadata.planner_test="invalid"` 觸發 invalid Planner output。
-
-結果：
-
-```text
-final=completed
-planner_valid=False
-fallback=True
-errors=1
-plan_actions=goto,screenshot
-has_fallback_audit=True
-```
-
-### SkillHub resolved task
-
-先註冊：
-- `browser.goto`
-- `browser.screenshot`
-
-結果：
-
-```text
-final=completed
-unresolved=0
-skills=goto:browser.goto:True,screenshot:browser.screenshot:True
-all_resolved=True
-```
-
-## v0.1-v0.3 Regression Coverage
-
-既有測試維持通過：
-- `tests/test_policy.py`
-- `tests/test_evaluator.py`
-- `tests/test_v01_demo.py`
-- `tests/test_v02_lifecycle.py`
-- `tests/test_v03_artifacts.py`
-- `tests/test_worker_runner.py`
-
-重要回歸點：
-- allowlisted task 仍進入 `pending_approval`。
-- blocked-domain task 仍進入 `blocked`。
-- high-risk 與 sensitive instruction task 仍需要 approval。
-- approval 仍將 task 轉為 `queued`。
-- failed task 仍寫入 error metadata 與 audit。
-- artifact serialization 仍包含 v0.3 governance fields。
-- tenant mismatch artifact access 仍回傳 `403`。
+文件已更新為 v0.5 Auth/RBAC、production approval、demo JWT、role permissions、Dashboard v0.5 與測試數量。
 
 ## 其他觀察
 
 - Host 端 pytest 仍有 `.pytest_cache` permission warning，測試結果不受影響。
-- Docker 初次啟動遇到 Kafka/Zookeeper stale broker session，透過 restart zookeeper/kafka/api/worker 解決，未刪除 volume。
+- Docker Compose stack 使用既有 volumes；本次修正讓 bootstrap 在重複與並行執行時可安全 upsert demo tenant/users。
+- v0.5 仍未接外部 OIDC/JWKS；目前 JWT 是 local scaffold。
 
-## AGENTS.md 文件規範驗證
+## AGENTS.md 文件保留規範更新
 
 日期：2026-05-21
 
-本次新增根目錄 `AGENTS.md`，作為 BrowserAgent 專案通用工作規範。此變更是文件新增，未修改程式碼，因此未重新執行完整 `pytest` 與 `compileall`。
+本次依使用者要求更新根目錄 `AGENTS.md`，新增文件維護規範：更新全部文件時，舊內容除非錯誤、過期、重複到造成誤解，或與目前程式碼/路由/欄位/測試結果衝突，否則應保留版本演進脈絡；若確實刪除舊內容，需交代原因。
+
+此變更只修改文件規範，未修改程式碼，因此未重新執行完整 `pytest`、`compileall` 或 Docker 驗證。
 
 實際驗證結果：
 
 ```text
-Test-Path AGENTS.md -> True
-rg -n "Dashboard|/demo|DOCS/TEST_REPORT\.md|Docker Desktop|繁體中文|migration" AGENTS.md -> found required guidance
+rg -n "舊內容|版本如何演進|若確實需要刪除舊內容" AGENTS.md -> found required guidance
 git diff --check -> passed
 ```
 
-驗證重點：
-- `AGENTS.md` 已包含規劃方案、實作方案、測試要求、文件同步要求與專案特別注意事項。
-- 已明確要求未來規劃需有 UI 或 Dashboard 查詢與測試入口，預設使用 `/demo`。
-- 已明確要求實際測試結果寫入 `DOCS/TEST_REPORT.md`。
-- 已明確要求 Docker 測試前提醒使用者開啟 Docker Desktop。
-- 已明確要求文件使用繁體中文，並與程式碼、路由、欄位、Dashboard 情境與測試數量同步。
+## Manual Test 文件新增
+
+日期：2026-05-21
+
+本次新增 `DOCS/manual_test.md`，把 V0.5 Dashboard 手動測試流程整理成可照著操作的繁體中文文件。內容涵蓋 Docker 啟動、`/demo` 開啟、Identity/RBAC、`Try operator create` forbidden case、Normal planner task、approval、Planner/SkillHub、artifact query、fallback planner、blocked domain，以及最小合格檢查清單。
+
+此變更只新增手動測試文件，未修改程式碼，因此未重新執行完整 `pytest`、`compileall` 或 Docker 驗證。
+
+實際驗證結果：
+
+```text
+Test-Path DOCS/manual_test.md -> True
+rg -n "Browser Agent v0.5 Dashboard|Identity / RBAC|Try operator create|pending_approval|Approve selected|Artifact Query" DOCS/manual_test.md -> found required guidance
+git diff --check -> passed
+```

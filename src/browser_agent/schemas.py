@@ -10,8 +10,11 @@ class TaskCreateRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 class TaskApproveRequest(BaseModel):
-    approved_by: str
+    approved_by: str | None = None
     note: str | None = None
+
+class DemoTokenRequest(BaseModel):
+    role: str
 
 class SkillCreateRequest(BaseModel):
     name: str

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException
 from fastapi import Request
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
@@ -13,7 +13,8 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from .config import get_settings
 from .db import get_session_factory
 from . import models
-from .schemas import TaskCreateRequest, TaskApproveRequest, SkillCreateRequest
+from .auth import ActorContext, create_access_token, demo_actor_for_role, get_current_actor, require_roles
+from .schemas import DemoTokenRequest, TaskCreateRequest, TaskApproveRequest, SkillCreateRequest
 from .orchestrator import Orchestrator
 from .skillhub import SkillHub
 from .kafka import get_bus
@@ -28,15 +29,6 @@ def get_session():
         yield session
     finally:
         session.close()
-
-def _tenant_id() -> uuid.UUID:
-    return uuid.UUID("00000000-0000-0000-0000-000000000001")
-
-def _actor() -> uuid.UUID:
-    return uuid.UUID("00000000-0000-0000-0000-000000000002")
-
-def _demo_actor_label() -> str:
-    return "ops@example.com"
 
 DEMO_TASK_PAYLOAD = {
     "title": "Capture example.com",
@@ -60,7 +52,7 @@ def readyz(session: Session = Depends(get_session)):
     return {"status": "ready"}
 
 @router.get("/metrics")
-def metrics():
+def metrics(actor: ActorContext = Depends(require_roles("operator", "admin"))):
     return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 @router.get("/demo")
@@ -70,21 +62,54 @@ def demo(request: Request):
         "demo.html",
         {
             "demo_payload": DEMO_TASK_PAYLOAD,
-            "demo_actor": _demo_actor_label(),
+            "demo_roles": ["creator", "approver", "operator", "admin"],
         },
     )
+
+@router.get("/v1/auth/me")
+def auth_me(actor: ActorContext = Depends(get_current_actor)):
+    return serialize_actor(actor)
+
+@router.post("/v1/auth/demo-token")
+def create_demo_token(req: DemoTokenRequest):
+    settings = get_settings()
+    if not settings.auth_demo_tokens_enabled:
+        raise HTTPException(status_code=404, detail="demo tokens disabled")
+    try:
+        actor = demo_actor_for_role(req.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    token = create_access_token(actor, settings=settings)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": settings.auth_token_ttl_seconds,
+        "actor": serialize_actor(actor),
+    }
 
 def _correlation_id(request: Request) -> str:
     return request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
 
 @router.post("/v1/tasks")
-def create_task(req: TaskCreateRequest, request: Request, session: Session = Depends(get_session)):
+def create_task(
+    req: TaskCreateRequest,
+    request: Request,
+    actor: ActorContext = Depends(require_roles("creator", "admin")),
+    session: Session = Depends(get_session),
+):
     settings = get_settings()
     bus = get_bus(settings.kafka_bootstrap_servers)
     orch = Orchestrator(session, bus)
     correlation_id = _correlation_id(request)
     try:
-        task = orch.create_task(_tenant_id(), _actor(), req.model_dump(), correlation_id=correlation_id)
+        task = orch.create_task(
+            actor.tenant_id,
+            actor.user_id,
+            req.model_dump(),
+            correlation_id=correlation_id,
+            actor_label=actor.email,
+            actor_payload=actor.audit_payload(),
+        )
         session.commit()
     except ValueError as exc:
         session.rollback()
@@ -97,43 +122,59 @@ def create_task(req: TaskCreateRequest, request: Request, session: Session = Dep
     }
 
 @router.get("/v1/tasks")
-def list_tasks(limit: int = 20, session: Session = Depends(get_session)):
+def list_tasks(
+    limit: int = 20,
+    actor: ActorContext = Depends(require_roles("creator", "approver", "operator", "admin")),
+    session: Session = Depends(get_session),
+):
     limit = max(1, min(limit, 100))
     tasks = session.execute(
         select(models.Task)
-        .where(models.Task.tenant_id == _tenant_id())
+        .where(models.Task.tenant_id == actor.tenant_id)
         .order_by(models.Task.created_at.desc())
         .limit(limit)
     ).scalars().all()
     return [serialize_task_summary(task) for task in tasks]
 
 @router.get("/v1/tasks/{task_id}")
-def get_task(task_id: str, session: Session = Depends(get_session)):
+def get_task(
+    task_id: str,
+    actor: ActorContext = Depends(require_roles("creator", "approver", "operator", "admin")),
+    session: Session = Depends(get_session),
+):
     task = session.get(models.Task, uuid.UUID(task_id))
-    if not task:
+    if not task or task.tenant_id != actor.tenant_id:
         raise HTTPException(status_code=404, detail="task not found")
     return serialize_task(task)
 
 @router.get("/v1/tasks/{task_id}/audit")
-def get_task_audit(task_id: str, session: Session = Depends(get_session)):
+def get_task_audit(
+    task_id: str,
+    actor: ActorContext = Depends(require_roles("approver", "operator", "admin")),
+    session: Session = Depends(get_session),
+):
     task_uuid = uuid.UUID(task_id)
     entries = session.execute(
         select(models.AuditLog)
         .where(
             models.AuditLog.entity_type == "task",
             models.AuditLog.entity_id == str(task_uuid),
-            models.AuditLog.tenant_id == _tenant_id(),
+            models.AuditLog.tenant_id == actor.tenant_id,
         )
         .order_by(models.AuditLog.created_at.asc())
     ).scalars().all()
     return [serialize_audit_log(entry) for entry in entries]
 
 @router.get("/v1/artifacts/{artifact_id}/content")
-def get_artifact_content(artifact_id: str, session: Session = Depends(get_session)):
+def get_artifact_content(
+    artifact_id: str,
+    actor: ActorContext = Depends(require_roles("creator", "approver", "operator", "admin")),
+    session: Session = Depends(get_session),
+):
     artifact = session.get(models.TaskArtifact, uuid.UUID(artifact_id))
     if not artifact:
         raise HTTPException(status_code=404, detail="artifact not found")
-    ensure_artifact_access(artifact, _tenant_id())
+    ensure_artifact_access(artifact, actor.tenant_id)
     settings = get_settings()
     path = resolve_artifact_file_path(settings.artifact_base_path, artifact.uri)
     metadata = artifact.metadata_ or {}
@@ -226,6 +267,15 @@ def serialize_audit_log(entry) -> dict:
         "created_at": entry.created_at.isoformat(),
     }
 
+def serialize_actor(actor: ActorContext) -> dict:
+    return {
+        "user_id": str(actor.user_id),
+        "tenant_id": str(actor.tenant_id),
+        "email": actor.email,
+        "roles": list(actor.roles),
+        "permissions": sorted(actor.permissions),
+    }
+
 def resolve_artifact_file_path(base_path: str, uri: str) -> Path:
     base = Path(base_path).resolve()
     candidate = Path(uri)
@@ -249,15 +299,26 @@ def ensure_artifact_access(artifact, tenant_id: uuid.UUID) -> None:
         raise HTTPException(status_code=403, detail="artifact tenant mismatch")
 
 @router.post("/v1/tasks/{task_id}/approve")
-def approve_task(task_id: str, req: TaskApproveRequest, session: Session = Depends(get_session)):
+def approve_task(
+    task_id: str,
+    req: TaskApproveRequest | None = Body(default=None),
+    actor: ActorContext = Depends(require_roles("approver", "admin")),
+    session: Session = Depends(get_session),
+):
     settings = get_settings()
     bus = get_bus(settings.kafka_bootstrap_servers)
     orch = Orchestrator(session, bus)
     task = session.get(models.Task, uuid.UUID(task_id))
-    if not task:
+    if not task or task.tenant_id != actor.tenant_id:
         raise HTTPException(status_code=404, detail="task not found")
     try:
-        approval = orch.approve_task(task, _actor(), req.approved_by, req.note)
+        approval = orch.approve_task(
+            task,
+            actor.user_id,
+            actor.email,
+            req.note if req else None,
+            actor_payload=actor.audit_payload(),
+        )
         session.commit()
     except ValueError as exc:
         session.rollback()
@@ -270,9 +331,13 @@ def approve_task(task_id: str, req: TaskApproveRequest, session: Session = Depen
     }
 
 @router.post("/v1/skills")
-def create_skill(req: SkillCreateRequest, session: Session = Depends(get_session)):
+def create_skill(
+    req: SkillCreateRequest,
+    actor: ActorContext = Depends(require_roles("admin")),
+    session: Session = Depends(get_session),
+):
     skillhub = SkillHub(session)
-    skill = skillhub.register(_tenant_id(), _actor(), req)
+    skill = skillhub.register(actor.tenant_id, actor.user_id, req)
     session.commit()
     return {
         "skill_id": str(skill.id),
@@ -282,8 +347,15 @@ def create_skill(req: SkillCreateRequest, session: Session = Depends(get_session
     }
 
 @router.get("/v1/skills")
-def list_skills(session: Session = Depends(get_session)):
-    skills = session.execute(select(models.Skill).order_by(models.Skill.created_at.desc())).scalars().all()
+def list_skills(
+    actor: ActorContext = Depends(get_current_actor),
+    session: Session = Depends(get_session),
+):
+    skills = session.execute(
+        select(models.Skill)
+        .where(models.Skill.tenant_id == actor.tenant_id)
+        .order_by(models.Skill.created_at.desc())
+    ).scalars().all()
     return [
         {
             "id": str(s.id),
