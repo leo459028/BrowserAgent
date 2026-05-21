@@ -1,91 +1,74 @@
 # Roadmap
 
-本 roadmap 描述 BrowserAgent scaffold 的 implementation slices。
+本 roadmap 以可交付、可測試的 implementation slice 為單位。
 
-## v0.1：本機可執行 Demo
+## v0.1：可執行 Demo
 
-目標：讓 Docker Compose 跑通最短 browser task flow。
+目標：建立可用的 Docker Compose stack，讓 API、worker、PostgreSQL、Kafka、Redis、Playwright 可以完成基本 browser task flow。
 
-已實作：
-
-- API 與 worker containers。
-- Postgres/Kafka/Redis/MinIO services。
-- 透過 Playwright 執行 example task。
-- Completed status、evaluation、screenshot、HTML artifact。
+已完成：
+- `POST /v1/tasks` 建立 task。
+- Worker 執行 allowlisted browser task。
+- 產生 screenshot 與 HTML artifact。
+- Evaluator 寫入執行結果。
 
 ## v0.2：Lifecycle、Approval、Observability Dashboard
 
-目標：讓 task state、policy decisions、approval、audit、metrics、worker behavior 可以透過 API、tests、Dashboard 觀察。
+目標：讓 task 狀態、policy decision、approval、audit、metrics 與 worker 行為可觀測。
 
-已實作：
-
-- allowlisted low/medium tasks 進入 pending approval；
-- high/critical risk tasks 進入 pending approval；
-- sensitive instructions 進入 pending approval；
-- non-allowlisted domains 進入 blocked status；
-- policy reason 存入 task metadata 與 audit payloads；
-- approval 將 task 移到 `queued` 並 publish `agent.tasks.queued`；
-- worker consume queued tasks；
-- failed execution 寫入 error metadata；
-- process-local metrics；
-- lifecycle audit events；
-- `GET /v1/tasks`；
-- `GET /v1/tasks/{task_id}/audit`；
-- `/demo` Dashboard 支援 task creation、approval、metrics、audit、steps、evaluation、artifacts。
+已完成：
+- allowlisted task 進入 `pending_approval`。
+- high/critical risk 與敏感指令 task 需要 approval。
+- non-allowlisted domain task 進入 `blocked`。
+- approval 後 task 進入 `queued` 並發布 `agent.tasks.queued`。
+- worker 消費 queued task，失敗時寫入 error metadata。
+- `GET /v1/tasks`、`GET /v1/tasks/{task_id}/audit`。
+- `/demo` 顯示 lifecycle、approval、metrics、audit、steps、evaluation、artifacts。
 
 ## v0.3：Artifact Governance 與 Dashboard Query
 
-目標：讓 artifacts 能被 governance、inspection、testing，並能透過 API 與 Dashboard 驗證。
+目標：讓 artifacts 有治理 metadata、tenant-scoped access check，以及 Dashboard 查詢/測試能力。
 
-已實作：
-
-- artifact backend abstraction；
-- local artifact backend 保留為 active backend；
-- S3 backend placeholder 預留給未來 deployment slice；
-- artifact metadata：checksum、content type、size、backend、retention metadata、redaction metadata；
-- no-op HTML/screenshot redaction hook；
-- tenant-scoped artifact read checks；
-- local artifact content 的 base-path enforcement；
-- governed artifact access URL；
-- `/demo` v0.3 Dashboard artifact table 與 Artifact Query panel；
-- v0.3 unit、integration、Docker、Dashboard tests。
-
-Acceptance status：passed。請見 [TEST_REPORT.md](./TEST_REPORT.md)。
+已完成：
+- `ArtifactStore` protocol。
+- `LocalArtifactStore` 寫入 SHA-256、content type、size、backend、retention、redaction metadata。
+- `NoopArtifactRedactor` 作為預設 redaction hook。
+- `GET /v1/artifacts/{artifact_id}/content` 檢查 tenant 與 artifact base path。
+- `/demo` Artifact Query panel 可預覽 screenshot、開啟 HTML、測試 governed artifact access。
 
 ## v0.4：Planner/SkillHub Integration
 
-建議下一個 slice。
+目標：讓 Planner 輸出可驗證、fallback 可稽核、SkillHub resolver 結果可查詢，並透過 Dashboard 測試。
 
-規劃項目：
-
-- 定義 Planner output JSON schema；
-- runner execution 前 validate planner output；
-- 將 SkillHub resolver 接到 tool/action selection；
-- 儲存 planner version 與 prompt/version metadata；
-- 當 planner output invalid 時提供 deterministic fallback；
-- 保留 v0.3 產生的 artifact governance metadata。
+已完成：
+- `src/browser_agent/planner.py` 定義 Planner schema validation。
+- 支援 action：`goto`、`click`、`fill`、`press`、`wait`、`extract_text`、`screenshot`。
+- 無效 Planner output 觸發 deterministic fallback。
+- Planner metadata 寫入 `tasks.metadata.planner`，實際執行步驟寫入 `tasks.metadata.plan`。
+- `TaskRunner` 對每個 browser action 解析 SkillHub capability，例如 `browser.goto`。
+- resolver 結果寫入 `task_steps.input_data.skill`。
+- 找不到 skill 時不阻止執行，改用 builtin browser action fallback。
+- `/demo` 更新為 `Browser Agent v0.4 Dashboard`，新增 Planner/SkillHub 查詢與測試情境。
+- v0.4 測試結果已記錄於 [TEST_REPORT.md](./TEST_REPORT.md)。
 
 ## v0.5：Auth/RBAC 與 Production Approval
 
-規劃項目：
-
-- OIDC/JWT auth；
-- tenant/user/role claims；
-- RBAC roles，例如 creator、approver、operator、admin；
-- production human approval API 與 UI；
+預計範圍：
+- OIDC/JWT auth。
+- tenant/user/role claims。
+- RBAC roles：creator、approver、operator、admin。
+- production human approval API 與 UI。
 - approval audit 使用 authenticated actor。
 
 ## v1.0：Production-Ready Platform
 
-規劃項目：
-
-- Kubernetes manifests / Helm chart；
-- worker autoscaling；
-- Redis locks/dedupe/rate limiting；
-- DLQ 與 replay tooling；
-- gVisor/Kata/microVM sandbox；
-- secrets vault 與 short-lived credentials；
-- distributed tracing；
-- Dashboard + alerting；
-- browser replay UI；
-- policy-as-code 與 rule version audit。
+預計範圍：
+- Kubernetes manifests 或 Helm chart。
+- Worker autoscaling。
+- Redis locks、dedupe、rate limiting。
+- DLQ 與 replay tooling。
+- 強化 sandbox，例如 gVisor、Kata 或 microVM。
+- secrets vault 與短期憑證。
+- distributed tracing。
+- production Dashboard 與 alerting。
+- browser replay UI。

@@ -1,35 +1,39 @@
-# BrowserAgent 文件
+# BrowserAgent 文件索引
 
-最後更新：2026-05-20
+最後更新：2026-05-21
 
-`BrowserAgent` 是 enterprise browser agent platform 的 production-grade scaffold。目前完成 v0.2 lifecycle / approval / observability，以及 v0.3 artifact governance + Dashboard。
+`BrowserAgent` 是 enterprise browser agent platform 的 production-grade scaffold。此版本已完成 v0.4 Planner/SkillHub Dashboard implementation slice：task lifecycle、approval、observability、artifact governance、Planner schema validation、deterministic fallback，以及 SkillHub resolver metadata 都已可透過 API 與 `/demo` Dashboard 驗證。
 
-## 目前狀態
+## 目前完成範圍
 
-- v0.2：task lifecycle、policy decisions、approval flow、audit logs、metrics、worker execution、本機 Dashboard。
-- v0.3：artifact backend abstraction、local artifact governance metadata、no-op redaction hook、tenant-scoped artifact access checks、`/demo` artifact query/testing UI。
-- v0.4：尚未實作。Planner/SkillHub integration 是下一個主要方向。
+- v0.1：Docker Compose demo stack、API、worker、Playwright browser task、screenshot/HTML artifacts。
+- v0.2：task lifecycle、policy decision、approval flow、audit logs、metrics、Dashboard。
+- v0.3：artifact backend abstraction、local artifact governance metadata、no-op redaction hook、tenant-scoped artifact access checks、Artifact Query UI。
+- v0.4：Planner output validation、invalid output fallback、SkillHub resolver metadata、Planner/SkillHub Dashboard panel、Normal/Fallback/SkillHub E2E 測試。
 
 ## 文件列表
 
-| 文件 | 用途 |
+| 文件 | 內容 |
 |---|---|
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | Runtime architecture、components、lifecycle、known gaps |
-| [API.md](./API.md) | FastAPI endpoints、request/response shapes、Dashboard API |
-| [DATA_MODEL.md](./DATA_MODEL.md) | ORM/schema model 與 metadata conventions |
-| [CONFIGURATION.md](./CONFIGURATION.md) | Environment variables、Docker Compose、Kafka、artifacts |
-| [DEVELOPMENT.md](./DEVELOPMENT.md) | Local development 與 test commands |
-| [RUNBOOK.md](./RUNBOOK.md) | Docker Compose verification 與 operational checks |
-| [SECURITY_AND_POLICY.md](./SECURITY_AND_POLICY.md) | Policy、approval、artifact access boundaries |
-| [OBSERVABILITY.md](./OBSERVABILITY.md) | Health checks、metrics、audit、Dashboard observations |
-| [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) | 已實作與待辦範圍 |
-| [TEST_REPORT.md](./TEST_REPORT.md) | v0.2/v0.3 unit、integration、Docker、Dashboard test results |
-| [ROADMAP.md](./ROADMAP.md) | v0.4 之後方向 |
-| [USE_CASES.md](./USE_CASES.md) | Product use cases 與 operating scenarios |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Runtime architecture、components、lifecycle、Planner/SkillHub flow、known gaps |
+| [API.md](./API.md) | FastAPI endpoints、request/response shape、Planner metadata、artifact access、Skill API |
+| [DATA_MODEL.md](./DATA_MODEL.md) | ORM/schema model、task metadata convention、Planner/SkillHub metadata、artifact metadata |
+| [CONFIGURATION.md](./CONFIGURATION.md) | Environment variables、Docker Compose services、Kafka topics、artifact paths |
+| [DEVELOPMENT.md](./DEVELOPMENT.md) | 本機開發、測試命令、Docker 測試、常見注意事項 |
+| [RUNBOOK.md](./RUNBOOK.md) | Docker Compose 操作、Dashboard 測試、API E2E、troubleshooting |
+| [SECURITY_AND_POLICY.md](./SECURITY_AND_POLICY.md) | Instruction scan、policy、approval、artifact access、Planner/SkillHub 安全邊界 |
+| [OBSERVABILITY.md](./OBSERVABILITY.md) | Health checks、metrics、audit events、Dashboard 可觀測項目 |
+| [NON_TECHNICAL_OVERVIEW.md](./NON_TECHNICAL_OVERVIEW.md) | 給一般人看的白話說明、應用場景、不適合場景、特性與限制 |
+| [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) | 已完成項目與尚未完成項目 |
+| [TEST_REPORT.md](./TEST_REPORT.md) | Host、Docker、Dashboard、E2E 實際測試結果 |
+| [ROADMAP.md](./ROADMAP.md) | v0.1 到 v1.0 的版本路線 |
+| [USE_CASES.md](./USE_CASES.md) | 目前可展示與驗證的使用情境 |
 
-## 重要說明
+## 重要限制
 
-- API auth/RBAC 尚未實作；本機 API 使用固定 demo tenant/user UUIDs。
-- Docker Compose 包含 MinIO，但 active artifact backend 仍是 `ARTIFACT_BASE_PATH` 底下的 local filesystem。
-- Metrics 是 process-local；API `/metrics` 不會聚合 worker process counters。
-- `/demo` 是本機 v0.3 Dashboard，用於測試與觀察，不是 production operator UI。
+- API auth/RBAC 尚未實作；目前使用固定 demo tenant/user UUID。
+- `/demo` 是本機測試 Dashboard，不是 production operator UI。
+- Planner 仍是 heuristic，不接外部 LLM。
+- SkillHub v0.4 只做 capability resolution metadata，不執行第三方 skill。
+- Active artifact backend 仍是 local filesystem；MinIO 目前在 Compose 中提供，但程式尚未把 artifacts upload 到 MinIO。
+- `/metrics` 是 process-local；API `/metrics` 不包含 worker process counters。
