@@ -6,28 +6,74 @@ Base URL：
 http://localhost:8000
 ```
 
-目前 API 使用固定 demo identity，正式 auth/RBAC 尚未實作：
+v0.5 預設啟用 Auth/RBAC。除了 `/healthz`、`/readyz`、`/demo` 與 local demo token endpoint 之外，API 需要：
 
-- tenant：`00000000-0000-0000-0000-000000000001`
-- actor：`00000000-0000-0000-0000-000000000002`
-- approver label：`ops@example.com`
+```text
+Authorization: Bearer <JWT>
+```
+
+JWT 是本機簽發的 OIDC-compatible token，claims 包含 `iss`、`aud`、`sub`、`tenant_id`、`email`、`roles`、`exp`。
+
+## Auth
+
+### `POST /v1/auth/demo-token`
+
+本機測試用 token endpoint。只有 `AUTH_DEMO_TOKENS_ENABLED=true` 時啟用。
+
+Request：
+
+```json
+{"role": "creator"}
+```
+
+可用 role：
+
+- `creator`
+- `approver`
+- `operator`
+- `admin`
+
+Response：
+
+```json
+{
+  "access_token": "jwt",
+  "token_type": "bearer",
+  "expires_in": 3600,
+  "actor": {
+    "user_id": "uuid",
+    "tenant_id": "00000000-0000-0000-0000-000000000001",
+    "email": "creator@example.com",
+    "roles": ["creator"],
+    "permissions": ["artifact:read", "skill:read", "task:create", "task:read"]
+  }
+}
+```
+
+### `GET /v1/auth/me`
+
+回傳目前 token actor 與 permission summary。
 
 ## Dashboard
 
 ### `GET /demo`
 
-回傳 `Browser Agent v0.4 Dashboard`。Dashboard 可用來：
+回傳 `Browser Agent v0.5 Dashboard`。Dashboard 可用來：
 
-- 建立 normal planner、fallback planner、SkillHub resolved、SkillHub missing 測試 task。
-- 註冊 demo SkillHub skills。
-- 核准 `pending_approval` task。
-- 查詢 task status、policy reason、Planner validation、SkillHub resolution。
-- 查詢 metrics、audit timeline、steps、evaluation、artifacts。
-- 預覽 screenshot artifact、開啟 HTML artifact、測試 governed artifact access。
+- 切換 creator、approver、operator、admin demo roles。
+- 用 creator/admin 建立 task。
+- 用 approver/admin 核准 `pending_approval` task。
+- 用 operator/admin 查詢 metrics、task、audit、artifact。
+- 測試 operator 建立 task 時的 `403` forbidden scenario。
+- 查詢 Planner validation、SkillHub resolution、steps、evaluation、artifacts。
+
+`/demo` 仍是本機測試 Dashboard，不是 production operator UI。
 
 ## Health 與 Metrics
 
 ### `GET /healthz`
+
+公開 endpoint。
 
 ```json
 {"status": "ok"}
@@ -35,7 +81,7 @@ http://localhost:8000
 
 ### `GET /readyz`
 
-執行 database `select(1)` readiness check。
+公開 endpoint，執行 database `select(1)` readiness check。
 
 ```json
 {"status": "ready"}
@@ -43,20 +89,22 @@ http://localhost:8000
 
 ### `GET /metrics`
 
-回傳 Prometheus exposition text。主要 metrics：
+需要 `operator` 或 `admin` token。回傳 Prometheus exposition text。
+
+主要 metrics：
 
 - `browser_agent_tasks_created_total`
 - `browser_agent_tasks_executed_total`
 - `browser_agent_tasks_failed_total`
 - `browser_agent_task_duration_seconds`
 
-注意：目前 metrics 為 process-local；API `/metrics` 不會包含 worker process 的 counters。
+注意：目前 metrics 為 process-local；API `/metrics` 不會包含 worker process counters。
 
 ## Tasks
 
 ### `POST /v1/tasks`
 
-建立 task、執行 instruction/policy checks、寫入 audit，並發布 `agent.tasks.created`。
+需要 `creator` 或 `admin`。建立 task、執行 instruction/policy checks、寫入 audit，並發布 `agent.tasks.created`。
 
 Request：
 
@@ -85,9 +133,10 @@ Response：
 }
 ```
 
-Policy behavior：
+Behavior：
 
-- allowlisted low/medium task 進入 `pending_approval`。
+- task 的 `tenant_id` 與 `created_by` 來自 token actor。
+- allowlisted low/medium task 仍進入 `pending_approval`，由人核准後才 queued。
 - high/critical risk task 進入 `pending_approval`。
 - 敏感指令，例如 `login`、`password`、`payment`、`transfer`，進入 `pending_approval`。
 - non-allowlisted domain task 進入 `blocked`。
@@ -95,7 +144,7 @@ Policy behavior：
 
 ### `GET /v1/tasks`
 
-回傳 recent task summaries，供 Dashboard 使用。
+需要 authenticated actor。回傳同 tenant recent task summaries。
 
 Query：
 
@@ -103,97 +152,43 @@ Query：
 
 ### `GET /v1/tasks/{task_id}`
 
-回傳 task detail，包含：
+需要 authenticated actor。只允許讀同 tenant task；tenant mismatch 以 `404 task not found` 處理。
 
-- task identifiers、title、instructions、status、priority、risk_level、correlation_id。
-- `metadata.policy`。
-- `metadata.planner`。
-- `metadata.plan`。
-- `metadata.browser_result`。
-- `metadata.evaluation`。
-- `steps[]`。
-- `artifacts[]`。
-
-v0.4 Planner metadata 範例：
-
-```json
-{
-  "planner": {
-    "version": "heuristic-v0.4",
-    "valid": true,
-    "source": "heuristic",
-    "validation_errors": [],
-    "fallback_used": false,
-    "fallback_source": null,
-    "skill_resolution": {
-      "unresolved": ["browser.goto", "browser.screenshot"],
-      "unresolved_count": 2
-    }
-  },
-  "plan": [
-    {
-      "action": "goto",
-      "url": "https://example.com",
-      "skill": {
-        "name": "browser.goto",
-        "version": null,
-        "entrypoint": "builtin.browser.goto",
-        "resolved": false
-      }
-    }
-  ]
-}
-```
-
-`steps[].input_data.skill` 會保存同一份 resolution 摘要，方便從 task steps 查詢實際採用的 capability。
-
-Artifact summary 範例：
-
-```json
-{
-  "id": "uuid",
-  "artifact_type": "screenshot",
-  "uri": "/data/artifacts/2026/05/21/task/screenshot-sha.png",
-  "sha256": "hex",
-  "content_type": "image/png",
-  "size_bytes": 18002,
-  "backend": "local",
-  "retention": {"policy": "default", "expires_at": null},
-  "redaction": {"status": "not_applied", "strategy": "noop"},
-  "redaction_status": "not_applied",
-  "metadata": {},
-  "created_at": "2026-05-21T...",
-  "download_url": "/v1/artifacts/{artifact_id}/content"
-}
-```
+回傳 task detail，包含 identifiers、status、metadata、steps、artifacts。
 
 ### `GET /v1/tasks/{task_id}/audit`
 
-回傳 task audit timeline。典型順序：
+需要 `approver`、`operator` 或 `admin`。回傳同 tenant task audit timeline。
+
+典型順序：
 
 ```text
 task.created -> task.pending_approval -> task.approved -> task.queued ->
-task.execution_started -> task.artifact_written -> task.artifact_written ->
-task.evaluated -> task.completed
+task.execution_started -> task.artifact_written -> task.evaluated -> task.completed
 ```
 
-v0.4 可能新增：
+v0.5 approval audit payload 會包含：
 
-- `task.plan_fallback_used`
-- `task.skill_resolution`
+```json
+{
+  "actor_user_id": "uuid",
+  "actor_email": "approver@example.com",
+  "actor_roles": ["approver"],
+  "correlation_id": "cid"
+}
+```
 
 ### `POST /v1/tasks/{task_id}/approve`
 
-核准 `pending_approval` task，狀態轉為 `queued`，並發布 `agent.tasks.queued`。
+需要 `approver` 或 `admin`。核准 `pending_approval` task，狀態轉為 `queued`，並發布 `agent.tasks.queued`。
 
 Request：
 
 ```json
-{
-  "approved_by": "ops@example.com",
-  "note": "Approved for local test"
-}
+{"note": "Approved from v0.5 local smoke test"}
 ```
+
+`approved_by` request 欄位保留相容但不再被信任；實際 approval actor 一律使用 token actor。
 
 Response：
 
@@ -212,12 +207,10 @@ Response：
 
 ### `GET /v1/artifacts/{artifact_id}/content`
 
-回傳 screenshot 或 HTML artifact content。
-
-Access checks：
+需要 authenticated actor。Access checks：
 
 - artifact 必須存在。
-- artifact 所屬 task tenant 必須符合 demo tenant。
+- artifact 所屬 task tenant 必須符合 token tenant。
 - local artifact path 必須 resolve 在 `ARTIFACT_BASE_PATH` 之內。
 - missing file 回傳 `404`。
 - tenant mismatch 或 path traversal 回傳 `403`。
@@ -228,23 +221,8 @@ Response 依 artifact metadata 設定 content type，例如 `image/png` 或 `tex
 
 ### `POST /v1/skills`
 
-註冊 demo tenant skill。
-
-Request：
-
-```json
-{
-  "name": "browser.goto",
-  "version": "1.0.0",
-  "description": "Built-in browser goto action",
-  "skill_type": "browser_action",
-  "entrypoint": "browser.goto",
-  "input_schema": {"type": "object", "required": ["url"]},
-  "output_schema": {"type": "object"},
-  "policy_tags": ["browser", "navigation"]
-}
-```
+需要 `admin`。註冊同 tenant demo SkillHub capability。
 
 ### `GET /v1/skills`
 
-列出已註冊 skills，包含 `is_active` 欄位。v0.4 runner 會用 `SkillHub.resolve()` 查詢 active 的 `browser.<action>` capability。
+需要 authenticated actor。列出同 tenant 已註冊 skills，包含 `is_active` 欄位。Runner 仍使用 `SkillHub.resolve()` 查詢 active 的 `browser.<action>` capability。

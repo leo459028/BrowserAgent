@@ -2,105 +2,90 @@
 
 最後更新：2026-05-21
 
-## 總覽
+## 摘要
 
-Repository 目前已完成 v0.4 implementation slice。這仍是 production-grade scaffold，不是完整 production product；尚未接入正式 auth/RBAC、外部 LLM、Kubernetes、DLQ 或 production artifact object storage。
+Repository 目前已完成 **v0.5 Auth/RBAC 與 Production Approval** implementation slice。這仍是 production-grade scaffold，不是完整 production product；尚未接入外部 OIDC/JWKS、Kubernetes、DLQ、production artifact object storage 或 production operator UI。
 
 ## 已完成 Components
 
 - FastAPI app factory 與 router。
-- `/healthz`、`/readyz`、`/metrics`。
-- `POST /v1/tasks`、`GET /v1/tasks`、`GET /v1/tasks/{task_id}`。
-- `GET /v1/tasks/{task_id}/audit`。
-- `POST /v1/tasks/{task_id}/approve`。
-- `GET /v1/artifacts/{artifact_id}/content`。
-- `POST /v1/skills`、`GET /v1/skills`。
+- `/healthz`、`/readyz`。
+- Auth endpoints：`POST /v1/auth/demo-token`、`GET /v1/auth/me`。
+- Local JWT auth：HS256、issuer/audience/expiry validation。
+- RBAC roles：creator、approver、operator、admin。
+- Request-scoped tenant/user context。
+- `/metrics` 需 operator/admin。
+- `POST /v1/tasks` 需 creator/admin，並使用 token actor 寫入 `created_by`。
+- `GET /v1/tasks`、`GET /v1/tasks/{task_id}` 依 token tenant 查詢。
+- `GET /v1/tasks/{task_id}/audit` 需 approver/operator/admin。
+- `POST /v1/tasks/{task_id}/approve` 需 approver/admin，approval actor 來自 token。
+- `GET /v1/artifacts/{artifact_id}/content` 依 token tenant 做 access check。
+- `POST /v1/skills` 需 admin；`GET /v1/skills` 需 authenticated actor。
 - SQLAlchemy ORM models 與 Alembic initial migration skeleton。
 - Kafka producer/consumer wrapper。
-- Worker consumer loop 與 retry handling。
-- Playwright browser runner。
-- Heuristic Planner。
-- v0.4 Planner schema validation 與 deterministic fallback。
+- Worker consumer loop 與 Playwright browser runner。
+- Heuristic Planner `heuristic-v0.4`、schema validation、deterministic fallback。
 - SkillHub registration 與 resolver metadata integration。
 - Evaluator。
-- Local artifact store 與 governance metadata。
-- Artifact redaction hook interface，預設為 no-op。
+- Local artifact store、governance metadata、no-op redaction hook。
 - JSON logging。
 - Docker Compose local stack。
-- `/demo` v0.4 Dashboard。
-- Bootstrap script：schema、demo tenant/user、Kafka topics。
+- `/demo` v0.5 Dashboard：Identity/RBAC、production approval、Planner/SkillHub、audit、metrics、artifact governance。
+- Bootstrap script：schema、demo tenant/users、Kafka topics。
 - API 支援 `X-Correlation-ID`。
 
-## v0.4 Planner Metadata
+## v0.5 Auth/RBAC
 
-`TaskRunner` 會先呼叫 `HeuristicPlanner.plan()`，再用 `build_planner_metadata()` 驗證輸出。metadata 寫入 `tasks.metadata`：
+Demo users：
+
+- `ops@example.com`：admin。
+- `creator@example.com`：creator。
+- `approver@example.com`：approver。
+- `operator@example.com`：operator。
+
+JWT claims：
 
 ```json
 {
-  "planner": {
-    "version": "heuristic-v0.4",
-    "valid": true,
-    "source": "heuristic",
-    "validation_errors": [],
-    "fallback_used": false,
-    "fallback_source": null,
-    "skill_resolution": {
-      "unresolved": ["browser.goto"],
-      "unresolved_count": 1
-    }
-  },
-  "plan": [
-    {
-      "action": "goto",
-      "url": "https://example.com",
-      "skill": {
-        "name": "browser.goto",
-        "version": null,
-        "entrypoint": "builtin.browser.goto",
-        "resolved": false
-      }
-    }
-  ]
+  "iss": "browser-agent-local",
+  "aud": "browser-agent-api",
+  "sub": "user-uuid",
+  "tenant_id": "tenant-uuid",
+  "email": "approver@example.com",
+  "roles": ["approver"],
+  "exp": 1770000000
 }
 ```
 
-若 Planner output invalid，runner 會：
-- 使用 deterministic fallback plan。
-- 寫入 `planner.valid=false`。
-- 寫入 `planner.validation_errors`。
-- 寫入 `planner.fallback_used=true`。
-- 產生 `task.plan_fallback_used` audit event。
+## Production Approval
 
-## SkillHub Integration 現況
+Approval API 不再信任 request body 的 `approved_by`。成功 approval 會：
 
-v0.4 將 browser action 視為 SkillHub capability：
-- `browser.goto`
-- `browser.click`
-- `browser.fill`
-- `browser.press`
-- `browser.wait`
-- `browser.extract_text`
-- `browser.screenshot`
+- 設定 `tasks.approved_by` 為 token user UUID。
+- 建立 `approvals` row，`approved_by` 為 token email。
+- 寫入 `task.approved` 與 `task.queued` audit。
+- 在 audit payload 與 Kafka event 中保存 `actor_user_id`、`actor_email`、`actor_roles`。
 
-若 `SkillHub.resolve()` 找到 active skill，step `input_data.skill.resolved=true`。若找不到，step 繼續使用 builtin browser action，並標示 `resolved=false`。此版本不執行第三方 skill，也不新增工具執行器。
+## Dashboard
 
-## Dashboard 現況
+`GET /demo` 顯示 `Browser Agent v0.5 Dashboard`，可執行：
 
-`GET /demo` 顯示 `Browser Agent v0.4 Dashboard`，可執行：
+- role selector 與 `/v1/auth/me` identity check。
+- operator forbidden create smoke test。
 - normal planner task。
 - fallback planner task。
 - SkillHub resolved task。
 - SkillHub missing task。
 - redaction metadata task。
-- high-risk、sensitive instruction、blocked-domain task。
+- high-risk、sensitive instruction、blocked-domain cases。
 - approval、runtime health、metrics、audit timeline、steps、evaluation、artifact preview、Artifact Query。
 
 ## 尚未完成
 
-- OIDC/JWT auth 與 RBAC。
-- Request-scoped tenant/user context。
+- 外部 OIDC/JWKS。
+- Worker service identity。
 - 外部 LLM provider integration。
-- 真正執行第三方 SkillHub tool。
+- 第三方 SkillHub tool execution。
 - Per-action confirmation。
 - Redis locks、rate limiting、dedupe。
 - DLQ 與 poison message replay tooling。
@@ -111,4 +96,3 @@ v0.4 將 browser action 視為 SkillHub capability：
 - CI pipeline。
 - Production secret management。
 - Distributed tracing。
-- Worker metrics endpoint 與 multiprocess metrics aggregation。
