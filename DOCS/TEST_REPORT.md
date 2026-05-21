@@ -11,7 +11,7 @@ v0.4 Planner/SkillHub Dashboard 實作後，已完成 host 端單元、整合、
 2026-05-21 重新檢查所有 Markdown 文件後，已同步更新：
 
 - `README.md`
-- `DOCS/README.md`
+- `DOCS/OVERVIEW.md`
 - `DOCS/API.md`
 - `DOCS/ARCHITECTURE.md`
 - `DOCS/CONFIGURATION.md`
@@ -258,3 +258,24 @@ all_resolved=True
 
 - Host 端 pytest 仍有 `.pytest_cache` permission warning，測試結果不受影響。
 - Docker 初次啟動遇到 Kafka/Zookeeper stale broker session，透過 restart zookeeper/kafka/api/worker 解決，未刪除 volume。
+
+## AGENTS.md 文件規範驗證
+
+日期：2026-05-21
+
+本次新增根目錄 `AGENTS.md`，作為 BrowserAgent 專案通用工作規範。此變更是文件新增，未修改程式碼，因此未重新執行完整 `pytest` 與 `compileall`。
+
+實際驗證結果：
+
+```text
+Test-Path AGENTS.md -> True
+rg -n "Dashboard|/demo|DOCS/TEST_REPORT\.md|Docker Desktop|繁體中文|migration" AGENTS.md -> found required guidance
+git diff --check -> passed
+```
+
+驗證重點：
+- `AGENTS.md` 已包含規劃方案、實作方案、測試要求、文件同步要求與專案特別注意事項。
+- 已明確要求未來規劃需有 UI 或 Dashboard 查詢與測試入口，預設使用 `/demo`。
+- 已明確要求實際測試結果寫入 `DOCS/TEST_REPORT.md`。
+- 已明確要求 Docker 測試前提醒使用者開啟 Docker Desktop。
+- 已明確要求文件使用繁體中文，並與程式碼、路由、欄位、Dashboard 情境與測試數量同步。
