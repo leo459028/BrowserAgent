@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE INDEX IF NOT EXISTS idx_tasks_tenant_status ON tasks(tenant_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_tenant_idempotency_key
+    ON tasks(tenant_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS task_steps (
     id UUID PRIMARY KEY,

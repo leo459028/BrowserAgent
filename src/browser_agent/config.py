@@ -16,13 +16,19 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://agent:agent@localhost:5432/agent"
     redis_url: str = "redis://localhost:6379/0"
-    kafka_bootstrap_servers: str = "localhost:9092"
+    kafka_bootstrap_servers: str = ""
     artifact_base_path: str = "/tmp/browser-agent/artifacts"
+    reliability_store: str = "memory"
 
     allowlist_domains: str = "example.com,example.org"
+    task_create_rate_limit_per_minute: int = 60
+    idempotency_ttl_seconds: int = 86400
+    task_lock_ttl_seconds: int = 300
     max_task_retries: int = 2
     task_timeout_seconds: int = 120
     browser_headless: bool = True
+    worker_service_id: str = "worker-local"
+    dlq_topic: str = "agent.tasks.dlq"
 
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minio"

@@ -27,6 +27,8 @@ def run_task(task_id: str | uuid.UUID, *, mark_failed_on_error: bool = True):
             artifact_base_path=settings.artifact_base_path,
             headless=settings.browser_headless,
             allowed_domains=settings.allowlist_domain_set,
+            timeout_seconds=settings.task_timeout_seconds,
+            worker_actor=f"service:{settings.worker_service_id}",
         )
         runner.run(task)
         session.commit()
@@ -42,6 +44,8 @@ def mark_task_failed_by_id(
     task_id: uuid.UUID,
     exc: Exception | None = None,
     duration_seconds: float | None = None,
+    actor: str = "worker",
+    dlq_payload: dict | None = None,
 ):
     session: Session = get_session_factory()()
     try:
@@ -52,8 +56,9 @@ def mark_task_failed_by_id(
             session,
             task,
             exc or RuntimeError("task execution failed"),
-            actor="worker",
+            actor=actor,
             duration_seconds=duration_seconds,
+            dlq_payload=dlq_payload,
         )
         session.commit()
     except Exception:

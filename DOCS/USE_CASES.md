@@ -6,7 +6,7 @@
 
 ### 目的
 
-驗證 v0.5 不再使用固定 demo identity，而是依 JWT actor 與 role 控制權限。
+驗證 v0.5 以後不再使用固定 demo identity，而是依 JWT actor 與 role 控制權限。
 
 ### 流程
 
@@ -95,7 +95,7 @@
 
 - `metadata.planner.skill_resolution.unresolved_count=0`。
 - `metadata.plan[].skill.resolved=true`。
-- task 仍由內建 `BrowserRunner` 執行；v0.5 不執行第三方 skill。
+- task 仍由內建 `BrowserRunner` 執行；v0.6 不執行第三方 skill。
 
 ## 5. SkillHub Missing Task
 
@@ -127,7 +127,10 @@ Dashboard scenarios：
 - Authenticated approval actor audit。
 - Failed task metadata。
 - Artifact access boundary。
-- Dashboard v0.5 rendering。
+- Dashboard v0.6 rendering。
+- Reliability / DLQ panel rendering。
+- Idempotency replay 與 conflict。
+- Worker lock、service identity、DLQ metadata、DLQ replay。
 
 ## 7. Artifact Governance
 
@@ -160,5 +163,26 @@ Access control：
 - Browser replay UI。
 - Distributed tracing。
 - Kubernetes deployment。
+
+## Use Case：Reliability / DLQ Smoke
+
+目標：
+
+驗證 v0.6 reliability foundation 可以從 `/demo` 與 API 查詢和操作。
+
+流程：
+
+1. 用 creator token 呼叫 `POST /v1/tasks`，加上 `Idempotency-Key`。
+2. 用相同 key 與相同 payload 再呼叫一次，預期回相同 `task_id`，`idempotency.replayed=true`。
+3. 用相同 key 但不同 payload 呼叫，預期 `409`。
+4. 在 `/demo` 的 Reliability / DLQ panel 按 `Idempotency smoke`，確認頁面顯示 replay 結果。
+5. 若有 worker final failure，operator/admin 可用 `GET /v1/dlq/tasks` 查到 `tasks.metadata.reliability.dlq`。
+6. operator/admin 可用 `POST /v1/dlq/tasks/{task_id}/replay` 將 failed task 放回 `queued`。
+
+預期：
+
+- rate limit 超過上限時回 `429`。
+- worker audit actor 顯示 `service:<WORKER_SERVICE_ID>`。
+- replay 會寫入 `task.dlq_replayed` audit，並發布 `agent.tasks.queued`。
 - Policy-as-code rule management。
 - Per-action confirmation。

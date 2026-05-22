@@ -28,6 +28,7 @@ TOPICS = [
     "agent.tasks.queued",
     "agent.tasks.failed",
     "agent.tasks.completed",
+    "agent.tasks.dlq",
 ]
 
 def wait_for_database(max_attempts: int = 30, delay_seconds: float = 2.0):

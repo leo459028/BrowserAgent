@@ -121,7 +121,9 @@ def test_demo_route_renders_console():
     response = client.get("/demo")
 
     assert response.status_code == 200
-    assert "Browser Agent v0.5 Dashboard" in response.text
+    assert "Browser Agent v0.6 Dashboard" in response.text
+    assert "Reliability / DLQ" in response.text
+    assert "Idempotency" in response.text
     assert "Identity / RBAC" in response.text
     assert "production approval" in response.text
     assert "Try operator create" in response.text
