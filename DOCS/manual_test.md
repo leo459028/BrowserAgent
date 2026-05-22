@@ -1,6 +1,6 @@
-# V0.5 Dashboard Manual Test
+# V0.6 Dashboard Manual Test
 
-本文件說明如何手動驗證 BrowserAgent v0.5 Dashboard。重點是「在 `/demo` 上怎麼點、預期看到什麼」。更完整的 API smoke 與 Docker troubleshooting 請參考 [RUNBOOK.md](./RUNBOOK.md)；實際測試結果請記錄到 [TEST_REPORT.md](./TEST_REPORT.md)。
+本文件說明如何手動驗證 BrowserAgent v0.6 Dashboard。重點是「在 `/demo` 上怎麼點、預期看到什麼」。更完整的 API smoke 與 Docker troubleshooting 請參考 [RUNBOOK.md](./RUNBOOK.md)；實際測試結果請記錄到 [TEST_REPORT.md](./TEST_REPORT.md)。
 
 ## 1. 前置條件
 
@@ -50,7 +50,8 @@ http://127.0.0.1:8000/demo
 
 預期畫面至少要看到：
 
-- `Browser Agent v0.5 Dashboard`
+- `Browser Agent v0.6 Dashboard`
+- `Reliability / DLQ`
 - `Identity / RBAC`
 - `Create Task`
 - `Task Detail`
@@ -61,7 +62,32 @@ http://127.0.0.1:8000/demo
 
 如果頁面無法開啟，先確認 `docker compose ps` 裡 `api` service 正在 running，且 port `8000` 沒被其他程式占用。
 
-## 3. Identity / RBAC 測試
+## 3. Reliability / DLQ 測試
+
+在 `Reliability / DLQ` 區塊，確認：
+
+- `Store` 顯示 `redis · available` 或目前設定的 store 狀態。
+- `Rate limit` 顯示每分鐘 task create 上限。
+- `Worker` 顯示 worker service identity。
+- `DLQ topic` 顯示 `agent.tasks.dlq`。
+
+按：
+
+```text
+Idempotency smoke
+```
+
+預期 `Idempotency` 顯示 replay，且同一個 task id 被重用。這代表相同 `Idempotency-Key` 與相同 payload 沒有重複建立 task。
+
+按：
+
+```text
+Refresh DLQ
+```
+
+若目前沒有 failed DLQ task，預期顯示 `No DLQ tasks.`。若有 DLQ task，可按 `replay`，預期 task 回到 `queued`，並由 worker 再次執行。
+
+## 4. Identity / RBAC 測試
 
 在 `Identity / RBAC` 區塊，role 下拉選單可切換：
 
@@ -88,7 +114,7 @@ http://127.0.0.1:8000/demo
 
 注意：這顆按鈕固定測試 **operator token 建立 task 會被拒絕**。因此，即使左側 role 下拉目前選的是 `admin`，按下 `Try operator create` 後看到 `403 insufficient role` 仍是正確結果，不代表 admin 權限壞掉。
 
-## 4. Normal Planner Task
+## 5. Normal Planner Task
 
 在 `Identity / RBAC` role 下拉選擇：
 
@@ -121,7 +147,7 @@ Create task
 - `Policy` 顯示 allowlisted / allowed 類型原因。
 - `Planner / SkillHub` 可能仍是 idle，這是正常行為，因為 Planner metadata 會在 approval 後由 worker 執行時才寫入。
 
-## 5. Approval 測試
+## 6. Approval 測試
 
 選取剛剛建立且狀態為 `pending_approval` 的 task。
 
@@ -144,7 +170,7 @@ docker compose logs worker
 docker compose logs kafka
 ```
 
-## 6. 結果查詢
+## 7. 結果查詢
 
 Task 完成後，逐一檢查下列 Dashboard 區塊。
 
@@ -196,7 +222,7 @@ approver@example.com
 - `screenshot`
 - `html`
 
-Screenshot preview 會由 Dashboard 用帶 token 的 fetch 載入。v0.5 的 artifact content endpoint 需要 Bearer token，因此不要用「直接開無 token artifact URL」作為通過標準。
+Screenshot preview 會由 Dashboard 用帶 token 的 fetch 載入。v0.6 的 artifact content endpoint 需要 Bearer token，因此不要用「直接開無 token artifact URL」作為通過標準。
 
 ### Artifact Query
 
@@ -214,7 +240,7 @@ Access OK
 
 並且 metadata JSON 會包含 content type、size、backend、redaction 等資訊。
 
-## 7. SkillHub Resolved Task
+## 8. SkillHub Resolved Task
 
 按：
 
@@ -237,7 +263,7 @@ SkillHub resolved task
 - `browser.screenshot` 顯示 resolved。
 - unresolved count 為 `0` 或不再列出 goto/screenshot。
 
-## 8. Fallback Planner Task
+## 9. Fallback Planner Task
 
 在 `Create Task` 選擇：
 
@@ -256,7 +282,7 @@ Fallback planner task
 
 這個 scenario 是用來驗證 invalid Planner output 不會直接執行，而是會記錄錯誤並改用 deterministic fallback。
 
-## 9. Blocked Domain Task
+## 10. Blocked Domain Task
 
 在 `Create Task` 選擇：
 
@@ -272,12 +298,14 @@ Blocked-domain task
 - `Policy` 顯示 domain not allowlisted 類型原因。
 - `Approve selected` 不應能讓 blocked task 進入 queued。
 
-## 10. 最小合格檢查清單
+## 11. 最小合格檢查清單
 
-一次 V0.5 Dashboard 手動測試至少要確認：
+一次 V0.6 Dashboard 手動測試至少要確認：
 
 - `/demo` 可以開啟。
-- 頁面顯示 `Browser Agent v0.5 Dashboard`。
+- 頁面顯示 `Browser Agent v0.6 Dashboard`。
+- `Reliability / DLQ` 顯示 store、rate limit、worker、DLQ topic。
+- `Idempotency smoke` 顯示 replay。
 - `Identity / RBAC` 可顯示 actor、roles、permissions。
 - `Try operator create` 回 `403 Forbidden: {"detail":"insufficient role"}`。
 - `Normal planner task` 可以建立。
@@ -288,13 +316,16 @@ Blocked-domain task
 - `Artifacts` 顯示 screenshot / html。
 - `Artifact Query` 按 `Check access` 顯示 `Access OK`。
 
-## 11. 測試結果記錄
+## 12. 測試結果記錄
 
 手動測試完成後，請把實際結果寫入 [TEST_REPORT.md](./TEST_REPORT.md)，至少包含：
 
 - 測試日期。
 - Docker 是否啟動成功。
 - `/demo` 是否可開啟。
+- Reliability / DLQ panel 顯示結果。
+- Idempotency smoke 實際結果。
+- DLQ list/replay 是否可操作。
 - RBAC forbidden case 實際結果。
 - Normal planner task 最終狀態。
 - approval actor。

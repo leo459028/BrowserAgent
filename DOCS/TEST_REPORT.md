@@ -1,6 +1,157 @@
 # Test Report
 
-最後更新：2026-05-21
+最後更新：2026-05-22
+
+## v0.6 Reliability Foundation 測試結果
+
+日期：2026-05-22
+
+本次完成 v0.6 Reliability Foundation：`Idempotency-Key`、task create rate limit、memory/Redis reliability store、worker service identity、task lock、DLQ metadata/replay API、v0.6 Dashboard Reliability / DLQ panel，以及 GitHub Actions CI workflow。
+
+### Host 測試
+
+`pytest -q`
+
+```text
+47 passed, 2 warnings in 1.85s
+```
+
+Warnings：
+
+- `pythonjsonlogger.jsonlogger` deprecation warning。
+- `.pytest_cache` 寫入 permission warning；測試通過，不影響結果。
+
+`python -m compileall src tests worker alembic`
+
+```text
+exit code 0
+```
+
+輸出確認 `src`、`tests`、`worker`、`alembic` 與 `alembic/versions/0002_v06_reliability_indexes.py` 都完成 compile scan。
+
+`git diff --check`
+
+```text
+exit code 0
+```
+
+### v0.6 Test Coverage
+
+新增 `tests/test_v06_reliability.py`，覆蓋：
+
+- same `Idempotency-Key` + same payload 回同一個 task，且 `agent.tasks.created` 只發布一次。
+- same `Idempotency-Key` + different payload 回 `409`。
+- task create rate limit exceeded 回 `429`。
+- `GET /v1/reliability` 僅 operator/admin 可查。
+- worker task lock 已存在時不重複執行。
+- worker final failure 會用 `service:<WORKER_SERVICE_ID>` actor、寫入 DLQ payload、發布 `agent.tasks.dlq`。
+- DLQ list/replay 僅 operator/admin 可用；replay 後 task 回 `queued`。
+- `/demo` render 包含 `Browser Agent v0.6 Dashboard`、`Reliability / DLQ`、`Idempotency`。
+
+### Docker 驗證
+
+Docker daemon 需要 elevated access；核准後 `docker info` 成功：
+
+```text
+Server Version: 29.4.1
+Operating System: Docker Desktop
+OSType: linux
+```
+
+`docker compose up -d --build`
+
+```text
+Image browseragent-api Built
+Image browseragent-worker Built
+Container browseragent-api-1 Started
+Container browseragent-worker-1 Started
+```
+
+第一次 `docker compose exec -T api pytest -q` 逾時，原因是 Kafka/Zookeeper stale session，Kafka log 顯示：
+
+```text
+KeeperErrorCode = NodeExists
+```
+
+依 runbook 執行：
+
+```powershell
+docker compose restart zookeeper kafka api worker
+```
+
+之後重新執行 container pytest 成功：
+
+```text
+47 passed in 2.20s
+```
+
+### Docker API / Dashboard / Reliability Smoke
+
+執行項目：
+
+- `GET /healthz`
+- `GET /readyz`
+- `GET /demo`
+- `POST /v1/auth/demo-token` for creator / approver / operator
+- `GET /v1/reliability`
+- creator `POST /v1/tasks` with `Idempotency-Key`
+- same key + same payload replay check
+- approver `POST /v1/tasks/{task_id}/approve`
+- polling operator `GET /v1/tasks/{task_id}`
+- operator `GET /v1/tasks/{task_id}/audit`
+- operator `GET /v1/dlq/tasks`
+
+實際結果：
+
+```json
+{
+  "health": "ok",
+  "ready": "ready",
+  "dashboardV06": true,
+  "reliabilityPanel": true,
+  "reliabilityBackend": "redis",
+  "reliabilityAvailable": true,
+  "workerServiceId": "worker-local",
+  "firstStatus": "pending_approval",
+  "secondSameTask": true,
+  "secondReplayed": true,
+  "approvedStatus": "queued",
+  "finalStatus": "completed",
+  "artifactCount": 2,
+  "plannerValid": true,
+  "approvalActor": "approver@example.com",
+  "workerActor": "service:worker-local",
+  "dlqCount": 0
+}
+```
+
+### 文件同步
+
+已同步更新：
+
+- `README.md`
+- `DOCS/OVERVIEW.md`
+- `DOCS/API.md`
+- `DOCS/ARCHITECTURE.md`
+- `DOCS/CONFIGURATION.md`
+- `DOCS/DATA_MODEL.md`
+- `DOCS/DEVELOPMENT.md`
+- `DOCS/IMPLEMENTATION_STATUS.md`
+- `DOCS/OBSERVABILITY.md`
+- `DOCS/ROADMAP.md`
+- `DOCS/RUNBOOK.md`
+- `DOCS/SECURITY_AND_POLICY.md`
+- `DOCS/USE_CASES.md`
+- `DOCS/manual_test.md`
+- `DOCS/TEST_REPORT.md`
+
+### 目前限制
+
+- v0.6 仍未接外部 OIDC/JWKS；目前 JWT 是 local scaffold。
+- Active artifact backend 仍是 local filesystem；MinIO/S3 尚未成為 active artifact backend。
+- `/demo` 仍是本機測試 Dashboard，不是 production operator UI。
+- DLQ replay 是單 task API；尚未做 bulk replay、poison message review workflow 或 alerting。
+- Redis reliability store 在 Docker Compose 可用；production HA Redis、retention policy 與 monitoring 仍待 v1.0 設計。
 
 ## 摘要
 

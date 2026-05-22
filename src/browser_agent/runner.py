@@ -15,12 +15,21 @@ from .planner import build_planner_metadata
 from .skillhub import SkillHub
 
 class TaskRunner:
-    def __init__(self, session: Session, artifact_base_path: str, headless: bool, allowed_domains: set[str]):
+    def __init__(
+        self,
+        session: Session,
+        artifact_base_path: str,
+        headless: bool,
+        allowed_domains: set[str],
+        timeout_seconds: int = 120,
+        worker_actor: str = "worker",
+    ):
         self.session = session
         self.artifact_store = build_artifact_store(artifact_base_path)
-        self.browser = BrowserRunner(headless=headless)
+        self.browser = BrowserRunner(headless=headless, timeout_seconds=timeout_seconds)
         self.allowed_domains = allowed_domains
         self.planner = HeuristicPlanner()
+        self.worker_actor = worker_actor
 
     def run(self, task: models.Task) -> dict:
         started = time.monotonic()
@@ -58,7 +67,7 @@ class TaskRunner:
             write_audit(
                 self.session,
                 task.tenant_id,
-                "worker",
+                self.worker_actor,
                 "task.plan_fallback_used",
                 "task",
                 str(task.id),
@@ -71,7 +80,7 @@ class TaskRunner:
             write_audit(
                 self.session,
                 task.tenant_id,
-                "worker",
+                self.worker_actor,
                 "task.skill_resolution",
                 "task",
                 str(task.id),
@@ -86,7 +95,7 @@ class TaskRunner:
             task,
             "executing",
             action="task.execution_started",
-            actor="worker",
+            actor=self.worker_actor,
         )
         task.started_at = datetime.now(timezone.utc)
         self.session.add(task)
@@ -124,7 +133,7 @@ class TaskRunner:
             write_audit(
                 self.session,
                 task.tenant_id,
-                "worker",
+                self.worker_actor,
                 "task.artifact_written",
                 "task",
                 str(task.id),
@@ -159,7 +168,7 @@ class TaskRunner:
         write_audit(
             self.session,
             task.tenant_id,
-            "worker",
+            self.worker_actor,
             "task.evaluated",
             "task",
             str(task.id),
@@ -189,7 +198,7 @@ class TaskRunner:
         write_audit(
             self.session,
             task.tenant_id,
-            "worker",
+            self.worker_actor,
             "task.completed" if final_status == "completed" else "task.review_required",
             "task",
             str(task.id),

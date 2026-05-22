@@ -33,6 +33,7 @@
 - `browser_agent_tasks_created_total`
 - `browser_agent_tasks_executed_total`
 - `browser_agent_tasks_failed_total`
+- `browser_agent_tasks_dlq_total`
 - `browser_agent_task_duration_seconds`
 
 注意：metrics 是 process-local。Docker Compose 中 API `/metrics` 只代表 API process counters，不包含 worker process counters。
@@ -56,8 +57,9 @@
 - `task.completed`
 - `task.review_required`
 - `task.failed`
+- `task.dlq_replayed`
 
-v0.5 approval audit payload 會包含：
+v0.5 以後 approval audit payload 會包含：
 
 - `actor_user_id`
 - `actor_email`
@@ -66,10 +68,15 @@ v0.5 approval audit payload 會包含：
 
 `GET /v1/tasks/{task_id}/audit` 需要 approver/operator/admin token。Dashboard 的 `Audit Timeline` panel 會用 operator token 顯示。
 
+v0.6 worker audit actor 會使用 `service:<WORKER_SERVICE_ID>`。Final failure audit payload 會包含 `dlq` metadata；replay 會寫入 `task.dlq_replayed`。
+
 ## Dashboard
 
-`GET /demo` 是本機 v0.5 Dashboard，可觀察：
+`GET /demo` 是本機 v0.6 Dashboard，可觀察：
 
+- Reliability store、rate limit、worker service identity、DLQ topic。
+- Idempotency smoke test。
+- DLQ failed task list 與 replay。
 - Identity/RBAC actor 與 permissions。
 - operator forbidden create scenario。
 - API health/readiness。
@@ -95,6 +102,8 @@ v0.5 approval audit payload 會包含：
 | Worker not consuming | queued tasks 長時間未被消費 |
 | Kafka unavailable | API/worker bootstrap 等待 Kafka 或 producer/consumer 連線失敗 |
 | High failure rate | `failed` / `review` status rate |
+| DLQ spike | `browser_agent_tasks_dlq_total` 或 `task.failed` with `dlq` 增加 |
+| Rate limited spike | `429` rate 異常升高 |
 | Policy anomaly | blocked/requires-approval rate 偏離 baseline |
 | Planner fallback spike | `task.plan_fallback_used` event 數量升高 |
 | SkillHub unresolved spike | `planner.skill_resolution.unresolved_count` 偏高 |

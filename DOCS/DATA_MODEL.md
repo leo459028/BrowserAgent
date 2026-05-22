@@ -1,6 +1,6 @@
 # Data Model
 
-資料模型以 [src/browser_agent/models.py](../src/browser_agent/models.py) 為準。v0.5 沒有新增資料表；Auth/RBAC 沿用既有 `tenants`、`users`、`tasks`、`approvals`、`audit_logs`，並由 request JWT 決定目前 actor。
+資料模型以 [src/browser_agent/models.py](../src/browser_agent/models.py) 為準。v0.6 沒有新增資料表；Reliability Foundation 沿用既有 `tasks`、`audit_logs` 與 metadata 欄位，新增 `tenant_id + idempotency_key` partial unique index，並由 request JWT / worker service identity 決定目前 actor。
 
 ## ERD
 
@@ -65,7 +65,7 @@ API 會把 Bearer token 轉成 `ActorContext`：
 - `status`：task lifecycle 狀態。
 - `approved_by`、`approved_at`。
 - `planned_at`、`started_at`、`completed_at`。
-- `idempotency_key`：保留欄位，尚未實作去重邏輯。
+- `idempotency_key`：v0.6 task create 去重 key；同 tenant 同 key 不可重複建立不同 payload。
 - `correlation_id`：來自 `X-Correlation-ID` 或 API 自動產生。
 - `metadata`：JSON metadata，保存 policy、Planner、SkillHub、browser result、evaluation。
 
@@ -120,13 +120,35 @@ Planner metadata 仍使用 `heuristic-v0.4`：
 
 Planner metadata 只會在 worker 執行 task 後出現；task 剛建立且仍在 `pending_approval` 時，Planner panel 可能顯示 idle。
 
+v0.6 reliability metadata 範例：
+
+```json
+{
+  "reliability": {
+    "idempotency_key": "capture-example-001",
+    "request_hash": "sha256",
+    "dlq": {
+      "status": "pending",
+      "topic": "agent.tasks.dlq",
+      "worker_id": "worker-local",
+      "attempts": 2,
+      "error": {"type": "RuntimeError", "message": "browser crashed"}
+    },
+    "replay": {
+      "count": 1,
+      "last_replayed_by": "operator@example.com"
+    }
+  }
+}
+```
+
 ## `approvals`
 
 `approvals.approved_by` 是 token actor email，例如 `approver@example.com`。`tasks.approved_by` 是 token actor user UUID。Request body 的 `approved_by` 不再是信任來源。
 
 ## `audit_logs`
 
-v0.5 approval audit payload 會保存 authenticated actor：
+v0.5 以後 approval audit payload 會保存 authenticated actor：
 
 ```json
 {
@@ -152,10 +174,23 @@ v0.5 approval audit payload 會保存 authenticated actor：
 - `task.completed`
 - `task.review_required`
 - `task.failed`
+- `task.dlq_replayed`
+
+Worker audit actor 在 v0.6 會使用 `service:<WORKER_SERVICE_ID>`，例如 `service:worker-local`。
+
+## Indexes
+
+v0.6 新增：
+
+```sql
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_tenant_idempotency_key
+ON tasks(tenant_id, idempotency_key)
+WHERE idempotency_key IS NOT NULL;
+```
 
 ## 尚未實作
 
 - 真實外部 OIDC/JWKS claims 來源。
-- status constraints、indexes、idempotency unique constraint。
+- status constraints 與更完整的 production indexes。
 - S3/MinIO active artifact backend metadata。
 - Planner output 與 SkillHub resolution 的獨立正規化資料表。
