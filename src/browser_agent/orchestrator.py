@@ -23,10 +23,20 @@ class Orchestrator:
         correlation_id: str | None = None,
         actor_label: str | None = None,
         actor_payload: dict | None = None,
+        idempotency_key: str | None = None,
+        request_hash: str | None = None,
     ) -> models.Task:
         security = inspect_instructions(payload["instructions"])
         if not security.allowed:
             raise ValueError(security.reason)
+        metadata = payload.get("metadata", {}) or {}
+        if idempotency_key or request_hash:
+            reliability = dict(metadata.get("reliability") or {})
+            if idempotency_key:
+                reliability["idempotency_key"] = idempotency_key
+            if request_hash:
+                reliability["request_hash"] = request_hash
+            metadata = {**metadata, "reliability": reliability}
 
         task = models.Task(
             tenant_id=tenant_id,
@@ -37,7 +47,8 @@ class Orchestrator:
             risk_level=payload.get("risk_level", "low"),
             status="created",
             correlation_id=correlation_id,
-            metadata_=payload.get("metadata", {}),
+            idempotency_key=idempotency_key,
+            metadata_=metadata,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
