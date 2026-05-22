@@ -51,13 +51,19 @@ def mark_task_failed(
     exc: Exception,
     actor: str | None = None,
     duration_seconds: float | None = None,
+    dlq_payload: dict | None = None,
 ):
     error = {
         "type": exc.__class__.__name__,
         "message": str(exc),
     }
     task.completed_at = datetime.now(timezone.utc)
-    task.metadata_ = {**(getattr(task, "metadata_", {}) or {}), "error": error}
+    metadata = {**(getattr(task, "metadata_", {}) or {}), "error": error}
+    if dlq_payload:
+        reliability = dict(metadata.get("reliability") or {})
+        reliability["dlq"] = dlq_payload
+        metadata["reliability"] = reliability
+    task.metadata_ = metadata
     TASK_FAILED.inc()
     if duration_seconds is not None:
         TASK_DURATION.observe(max(duration_seconds, 0.0))
@@ -69,7 +75,7 @@ def mark_task_failed(
         "failed",
         action="task.failed",
         actor=actor,
-        payload={"error": error},
+        payload={"error": error, **({"dlq": dlq_payload} if dlq_payload else {})},
     )
 
 def add_step(session: Session, task: models.Task, step_no: int, action_type: str, instruction: str, target: str | None = None, input_data: dict | None = None):

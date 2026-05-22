@@ -1,6 +1,6 @@
 # Runbook
 
-本 runbook 說明如何在本機 Docker Compose 驗證 v0.5 Auth/RBAC、Production Approval、Planner/SkillHub、artifact governance 與 E2E flow。Production 仍需要外部 OIDC/JWKS、secret management、object storage backend、retry/DLQ hardening 與更強的 browser sandbox isolation。
+本 runbook 說明如何在本機 Docker Compose 驗證 v0.6 Reliability Foundation、Auth/RBAC、Production Approval、Planner/SkillHub、artifact governance 與 E2E flow。Production 仍需要外部 OIDC/JWKS、secret management、object storage backend、production DLQ operations 與更強的 browser sandbox isolation。
 
 ## 1. 啟動 Stack
 
@@ -35,7 +35,7 @@ curl.exe http://127.0.0.1:8000/readyz
 {"status":"ready"}
 ```
 
-## 2. 開啟 v0.5 Dashboard
+## 2. 開啟 v0.6 Dashboard
 
 ```text
 http://127.0.0.1:8000/demo
@@ -43,6 +43,9 @@ http://127.0.0.1:8000/demo
 
 Dashboard scenarios：
 
+- `Reliability / DLQ`：查 reliability store、rate limit、worker identity、DLQ topic。
+- `Idempotency smoke`：預期同 key 同 payload replay 同一個 task。
+- `Refresh DLQ`：查 failed tasks；若有 DLQ task，可 replay 回 `queued`。
 - `Identity / RBAC`：切換 role、查看 token actor 與 permissions。
 - `Try operator create`：預期顯示 `403`，因 operator 不可建立 task。
 - `Normal planner task`：creator 建立，approver 核准，worker 完成，產生 screenshot/html artifacts。
@@ -95,7 +98,10 @@ $body = @{
 
 $created = Invoke-RestMethod -Method Post `
   -Uri http://127.0.0.1:8000/v1/tasks `
-  -Headers @{ Authorization = "Bearer $($creator.access_token)" } `
+  -Headers @{
+    Authorization = "Bearer $($creator.access_token)"
+    "Idempotency-Key" = "runbook-normal-001"
+  } `
   -ContentType "application/json" `
   -Body $body
 ```
@@ -108,7 +114,7 @@ $approver = Invoke-RestMethod -Method Post `
   -ContentType "application/json" `
   -Body '{"role":"approver"}'
 
-$approval = @{ note = "local v0.5 test" } | ConvertTo-Json
+$approval = @{ note = "local v0.6 test" } | ConvertTo-Json
 Invoke-RestMethod -Method Post `
   -Uri "http://127.0.0.1:8000/v1/tasks/$($created.task_id)/approve" `
   -Headers @{ Authorization = "Bearer $($approver.access_token)" } `
@@ -152,7 +158,42 @@ Invoke-WebRequest -Method Post `
 
 Creator approve task 應回 `403`。
 
-## 6. Artifact Content
+## 6. Reliability / DLQ Smoke
+
+查 reliability status：
+
+```powershell
+Invoke-RestMethod -Method Get `
+  -Uri http://127.0.0.1:8000/v1/reliability `
+  -Headers @{ Authorization = "Bearer $($operator.access_token)" }
+```
+
+預期可看到 `store.backend=redis`、`worker_service_id`、`dlq_topic=agent.tasks.dlq`。
+
+Idempotency replay：
+
+```powershell
+$headers = @{
+  Authorization = "Bearer $($creator.access_token)"
+  "Idempotency-Key" = "runbook-idempotency-001"
+}
+$first = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/v1/tasks -Headers $headers -ContentType "application/json" -Body $body
+$second = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/v1/tasks -Headers $headers -ContentType "application/json" -Body $body
+```
+
+預期 `$first.task_id` 等於 `$second.task_id`，且 `$second.idempotency.replayed=true`。
+
+查 DLQ：
+
+```powershell
+Invoke-RestMethod -Method Get `
+  -Uri http://127.0.0.1:8000/v1/dlq/tasks `
+  -Headers @{ Authorization = "Bearer $($operator.access_token)" }
+```
+
+若有 failed DLQ task，可用 `POST /v1/dlq/tasks/<TASK_ID>/replay` replay 回 `queued`。
+
+## 7. Artifact Content
 
 讀取 artifact content：
 
@@ -168,7 +209,7 @@ curl.exe http://127.0.0.1:8000/v1/artifacts/<ARTIFACT_ID>/content `
 - tenant mismatch 或 path traversal 回 `403`。
 - missing file 回 `404`。
 
-## 7. 測試命令
+## 8. 測試命令
 
 Host：
 
@@ -184,9 +225,9 @@ Docker：
 docker compose exec -T api pytest -q
 ```
 
-目前 host pytest 預期為 `39 passed`；最新實測請看 [TEST_REPORT.md](./TEST_REPORT.md)。
+目前 host pytest 預期為 `47 passed`；最新實測請看 [TEST_REPORT.md](./TEST_REPORT.md)。
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 ### `/readyz` 失敗
 

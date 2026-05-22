@@ -74,6 +74,7 @@ docker compose exec -T api pytest -q
 - `tests/test_v04_planner.py`：Planner schema validation、required fields、deterministic fallback、fallback metadata。
 - `tests/test_v04_skillhub.py`：SkillHub resolution、requested version、missing skill builtin fallback。
 - `tests/test_v05_auth_rbac.py`：JWT auth、RBAC deny/pass、authenticated approval actor、admin SkillHub registration、artifact tenant check。
+- `tests/test_v06_reliability.py`：idempotency、rate limit、reliability status、worker lock、DLQ publish/replay、Dashboard v0.6 rendering。
 - `tests/test_worker_runner.py`：worker task ID coercion、retry/backoff、failed marking。
 
 最新實測結果請看 [TEST_REPORT.md](./TEST_REPORT.md)。
@@ -110,7 +111,7 @@ docker compose restart zookeeper kafka api worker
 
 - Active artifact backend 是 `LocalArtifactStore`。
 - MinIO 目前在 Compose 中存在，但尚未作為 active artifact backend。
-- Redis 目前在 Compose 中存在，但尚未用於 locks、dedupe、rate limiting。
+- Redis 目前在 Compose 中作為 v0.6 reliability store，用於 task create rate limiting 與 worker task locks；host/unit tests 預設 memory store。
 - Kafka 與 Playwright lazy imports 方便 unit tests 不需 native services。
 - `/metrics` 是 process-local；API `/metrics` 不包含 worker process counters。
-- v0.5 local JWT 使用 `APP_SECRET_KEY` 簽章；正式部署不可使用預設值。
+- v0.6 local JWT 使用 `APP_SECRET_KEY` 簽章；正式部署不可使用預設值。

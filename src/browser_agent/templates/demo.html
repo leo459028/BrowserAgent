@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Browser Agent v0.5 Dashboard</title>
+  <title>Browser Agent v0.6 Dashboard</title>
   <style>
     :root {
       color-scheme: light;
@@ -197,8 +197,8 @@
   <main>
     <header>
       <div>
-        <h1>Browser Agent v0.5 Dashboard</h1>
-        <div class="muted">Local dashboard for Identity/RBAC, production approval, Planner validation, SkillHub resolution, metrics, audit, and artifact governance.</div>
+        <h1>Browser Agent v0.6 Dashboard</h1>
+        <div class="muted">Local dashboard for Reliability / DLQ, Identity/RBAC, production approval, Planner validation, SkillHub resolution, metrics, audit, and artifact governance.</div>
       </div>
       <div class="toolbar">
         <button id="refresh" class="secondary">Refresh</button>
@@ -241,6 +241,23 @@
             <div class="label">Permissions</div><div id="actor-permissions" class="value">-</div>
             <div class="label">Last RBAC</div><div id="rbac-result" class="value">-</div>
           </div>
+        </section>
+
+        <section>
+          <h2>Reliability / DLQ</h2>
+          <div class="button-row">
+            <button id="idempotency-smoke" class="secondary">Idempotency smoke</button>
+            <button id="refresh-dlq" class="secondary">Refresh DLQ</button>
+          </div>
+          <div class="kv" style="margin-top:12px">
+            <div class="label">Store</div><div id="reliability-store" class="value">-</div>
+            <div class="label">Rate limit</div><div id="rate-limit" class="value">-</div>
+            <div class="label">Worker</div><div id="worker-service-id" class="value">-</div>
+            <div class="label">DLQ topic</div><div id="dlq-topic" class="value">-</div>
+            <div class="label">Idempotency</div><div id="idempotency-result" class="value">-</div>
+          </div>
+          <h2 style="margin-top:16px">DLQ Tasks</h2>
+          <div id="dlq-list" class="muted">No DLQ tasks loaded.</div>
         </section>
 
         <section>
@@ -515,6 +532,52 @@
       }
     }
 
+    async function refreshReliability() {
+      try {
+        const info = await getJson("/v1/reliability", {}, "operator");
+        $("reliability-store").textContent = `${info.store.backend} · ${info.store.available ? "available" : "unavailable"}`;
+        $("rate-limit").textContent = `${info.task_create_rate_limit_per_minute}/minute`;
+        $("worker-service-id").textContent = info.worker_service_id;
+        $("dlq-topic").textContent = info.dlq_topic;
+      } catch (error) {
+        $("reliability-store").textContent = error.message;
+      }
+    }
+
+    async function refreshDlq() {
+      try {
+        const tasks = await getJson("/v1/dlq/tasks?limit=10", {}, "operator");
+        renderDlq(tasks);
+      } catch (error) {
+        $("dlq-list").innerHTML = `<span class="error-text">${escapeHtml(error.message)}</span>`;
+      }
+    }
+
+    async function runIdempotencySmoke() {
+      $("idempotency-smoke").disabled = true;
+      const key = `demo-${Date.now()}`;
+      const payload = currentPayload();
+      try {
+        const first = await getJson("/v1/tasks", {
+          method: "POST",
+          headers: {"Content-Type": "application/json", "Idempotency-Key": key},
+          body: JSON.stringify(payload),
+        }, "creator");
+        const second = await getJson("/v1/tasks", {
+          method: "POST",
+          headers: {"Content-Type": "application/json", "Idempotency-Key": key},
+          body: JSON.stringify(payload),
+        }, "creator");
+        $("idempotency-result").textContent = `${second.idempotency?.replayed ? "replayed" : "new"} · ${first.task_id === second.task_id ? second.task_id : "mismatch"}`;
+        currentTaskId = first.task_id;
+        await refreshAll();
+      } catch (error) {
+        $("idempotency-result").textContent = error.message;
+      } finally {
+        $("idempotency-smoke").disabled = false;
+      }
+    }
+
     async function refreshTasks() {
       try {
         const tasks = await getJson("/v1/tasks?limit=20", {}, "operator");
@@ -556,7 +619,7 @@
         await getJson(`/v1/tasks/${currentTaskId}/approve`, {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({note: "Approved from local v0.5 dashboard"}),
+          body: JSON.stringify({note: "Approved from local v0.6 dashboard"}),
         }, "approver");
         await refreshTask();
         await refreshTasks();
@@ -593,7 +656,7 @@
     }
 
     async function refreshAll() {
-      await Promise.all([checkRuntime(), refreshMetrics(), refreshTasks()]);
+      await Promise.all([checkRuntime(), refreshMetrics(), refreshTasks(), refreshReliability(), refreshDlq()]);
     }
 
     function renderTask(task) {
@@ -618,7 +681,7 @@
         {
           name: "browser.goto",
           version: "1.0.0",
-          description: "Built-in browser goto action for v0.5 Dashboard testing.",
+          description: "Built-in browser goto action for v0.6 Dashboard testing.",
           skill_type: "browser_action",
           entrypoint: "browser.goto",
           input_schema: {"type": "object", "required": ["url"]},
@@ -628,7 +691,7 @@
         {
           name: "browser.screenshot",
           version: "1.0.0",
-          description: "Built-in browser screenshot action for v0.5 Dashboard testing.",
+          description: "Built-in browser screenshot action for v0.6 Dashboard testing.",
           skill_type: "browser_action",
           entrypoint: "browser.screenshot",
           input_schema: {"type": "object"},
@@ -701,6 +764,41 @@
           await refreshTask();
         });
       });
+    }
+
+    function renderDlq(tasks) {
+      if (!tasks.length) {
+        $("dlq-list").innerHTML = '<span class="muted">No DLQ tasks.</span>';
+        return;
+      }
+      $("dlq-list").innerHTML = `<table><thead><tr><th>Task</th><th>Status</th><th>Worker</th><th>Error</th><th>Action</th></tr></thead><tbody>${tasks.map((task) => {
+        const dlq = task.dlq || {};
+        const error = dlq.error || {};
+        return `
+          <tr>
+            <td class="value">${escapeHtml(task.task_id)}</td>
+            <td><span class="status failed">${escapeHtml(dlq.status || task.status)}</span></td>
+            <td>${escapeHtml(dlq.worker_id || "-")}</td>
+            <td>${escapeHtml(error.message || "-")}</td>
+            <td><button class="secondary" data-replay-task-id="${task.task_id}">replay</button></td>
+          </tr>
+        `;
+      }).join("")}</tbody></table>`;
+      $("dlq-list").querySelectorAll("button[data-replay-task-id]").forEach((button) => {
+        button.addEventListener("click", () => replayDlq(button.dataset.replayTaskId));
+      });
+    }
+
+    async function replayDlq(taskId) {
+      try {
+        const replayed = await getJson(`/v1/dlq/tasks/${taskId}/replay`, {method: "POST"}, "operator");
+        $("idempotency-result").textContent = `DLQ replay queued · ${replayed.task_id}`;
+        currentTaskId = replayed.task_id;
+        await refreshAll();
+        startPolling();
+      } catch (error) {
+        $("idempotency-result").textContent = error.message;
+      }
     }
 
     function renderAudit(entries) {
@@ -881,6 +979,8 @@
       await refreshIdentity();
     });
     $("forbidden-create").addEventListener("click", tryForbiddenCreate);
+    $("idempotency-smoke").addEventListener("click", runIdempotencySmoke);
+    $("refresh-dlq").addEventListener("click", refreshDlq);
     $("create-task").addEventListener("click", createTask);
     $("register-skills").addEventListener("click", registerDemoSkills);
     $("approve").addEventListener("click", approveSelected);

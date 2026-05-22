@@ -1,6 +1,6 @@
 # Overview
 
-`BrowserAgent` 是 enterprise browser agent platform 的 production-grade scaffold。此版本已完成 v0.5 Auth/RBAC 與 Production Approval：API 使用本機 JWT 建立 request-scoped actor，並以 creator、approver、operator、admin 控制 task creation、approval、metrics、SkillHub registration 與 artifact access。
+`BrowserAgent` 是 enterprise browser agent platform 的 production-grade scaffold。此版本已完成 v0.6 Reliability Foundation：在 v0.5 Auth/RBAC 與 Production Approval 之上，加入 task create idempotency、rate limiting、worker service identity、task lock、DLQ metadata 與 replay API。
 
 ## 版本重點
 
@@ -9,6 +9,7 @@
 - v0.3：artifact backend abstraction、local artifact governance metadata、no-op redaction hook、tenant-scoped artifact access checks。
 - v0.4：Planner output validation、invalid output fallback、SkillHub resolver metadata、Planner/SkillHub Dashboard panel。
 - v0.5：local JWT auth、request-scoped tenant/user context、RBAC、production approval audit、v0.5 Dashboard identity panel。
+- v0.6：idempotency、rate limiting、Redis/memory reliability store、worker service identity、task lock、DLQ replay、basic CI、v0.6 Dashboard Reliability / DLQ panel。
 
 ## 文件索引
 
@@ -29,10 +30,10 @@
 
 ## 目前限制
 
-- v0.5 使用本機 JWT，不接真實外部 OIDC/JWKS。
+- v0.6 使用本機 JWT，不接真實外部 OIDC/JWKS。
 - `/demo` 是本機測試 Dashboard，不是正式 production operator UI。
 - Planner 仍是 heuristic，不接外部 LLM provider。
 - SkillHub 只做 capability resolution metadata，不執行第三方 skill。
 - Artifact active backend 仍是 local filesystem。
 - Metrics 為 process-local。
-- Worker retry、DLQ、任務重播、擴充部署仍待加強。
+- Worker autoscaling、擴充部署與 production-grade browser isolation 仍待加強。

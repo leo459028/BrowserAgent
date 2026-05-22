@@ -2,7 +2,7 @@
 
 ## Auth/RBAC
 
-v0.5 預設啟用 Bearer token 驗證。API 會驗證本機 HS256 JWT：
+v0.6 預設啟用 Bearer token 驗證。API 會驗證本機 HS256 JWT：
 
 - signature。
 - `iss = AUTH_JWT_ISSUER`。
@@ -89,7 +89,18 @@ Planner/SkillHub integration 仍是 metadata integration，不是任意 tool exe
 - invalid output 會改用 deterministic fallback。
 - fallback plan 只會用 `goto + screenshot` 或 `screenshot`。
 - SkillHub 找不到 skill 時會標示 `resolved=false` 並使用 builtin browser action。
-- v0.5 仍不執行第三方 SkillHub skill。
+- v0.6 仍不執行第三方 SkillHub skill。
+
+## Reliability Security Boundary
+
+v0.6 新增的 reliability 能力仍沿用 tenant 與 role 邊界：
+
+- `Idempotency-Key` 只在同 tenant 內生效；同 key 但 payload hash 不同會回 `409`。
+- task create rate limit scope 是 tenant/user，避免單一 actor 短時間建立大量 task。
+- worker task lock key 是 `task:<task_id>`，避免多 worker 重複執行同一 task。
+- `GET /v1/reliability`、`GET /v1/dlq/tasks`、`POST /v1/dlq/tasks/{task_id}/replay` 只允許 operator/admin。
+- DLQ replay 只允許 replay 同 tenant、狀態為 `failed` 且已有 DLQ metadata 的 task。
+- worker audit actor 使用 `service:<WORKER_SERVICE_ID>`，不偽裝成 human approver。
 
 ## 尚未完成的安全強化
 

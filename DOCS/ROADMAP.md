@@ -69,16 +69,27 @@ Roadmap 以可查詢、可驗證的 implementation slice 為單位。每個版�
 - `/v1/skills` create 限 admin。
 - `/demo` v0.5 Identity/RBAC panel 與 forbidden scenario。
 
-## v0.6 候選方向
+## v0.6：Reliability Foundation
 
-以下尚未排序，可依下一個產品目標挑選：
+目標：把 v1.0 reliability 風險往前收斂，讓 task creation、worker execution 與 failed task recovery 可查詢、可測試、可 replay。
+
+已完成：
+
+- `POST /v1/tasks` 支援 `Idempotency-Key`；同 tenant 同 key 同 payload 回既有 task，同 key 不同 payload 回 `409`。
+- task create rate limiting；超過時回 `429`。
+- memory/Redis reliability store abstraction。
+- worker service identity 與 task lock。
+- worker final failure 寫入 DLQ metadata 並發布 `agent.tasks.dlq`。
+- operator/admin 可查詢 DLQ tasks 並 replay 回 `queued`。
+- `/demo` v0.6 Reliability / DLQ panel。
+- `.github/workflows/ci.yml` 跑 `pytest -q`、`compileall`、`git diff --check`。
+- `tests/test_v06_reliability.py` 覆蓋 idempotency、rate limit、lock、DLQ、replay、Dashboard rendering。
+
+仍留到後續：
 
 - 外部 OIDC/JWKS verifier。
-- Rate limiting / idempotency / Redis locks。
-- Worker service identity。
-- DLQ 與 replay tooling。
-- CI pipeline。
 - MinIO/S3 active artifact backend。
+- production CI/CD pipeline 擴充與部署檔。
 
 ## v1.0：Production-Ready Platform
 
@@ -88,8 +99,8 @@ Roadmap 以可查詢、可驗證的 implementation slice 為單位。每個版�
 
 - Kubernetes manifests 或 Helm chart。
 - Worker autoscaling。
-- Redis locks、dedupe、rate limiting。
-- DLQ 與 replay tooling。
+- Redis-backed reliability 已有 v0.6 基礎；v1.0 仍需 HA Redis、operational dashboards 與 retention policy。
+- DLQ/replay 已有 v0.6 API；v1.0 仍需 poison message workflow、bulk replay、alerting 與 runbook automation。
 - 強化 browser sandbox，例如 gVisor、Kata 或 microVM。
 - secrets vault integration。
 - distributed tracing。

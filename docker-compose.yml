@@ -72,6 +72,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent
       REDIS_URL: redis://redis:6379/0
+      RELIABILITY_STORE: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       ARTIFACT_BASE_PATH: /data/artifacts
       ALLOWLIST_DOMAINS: example.com,example.org
@@ -79,6 +80,11 @@ services:
       MINIO_ACCESS_KEY: minio
       MINIO_SECRET_KEY: minio12345
       MINIO_BUCKET: browser-agent
+      TASK_CREATE_RATE_LIMIT_PER_MINUTE: 60
+      IDEMPOTENCY_TTL_SECONDS: 86400
+      TASK_LOCK_TTL_SECONDS: 300
+      WORKER_SERVICE_ID: worker-local
+      DLQ_TOPIC: agent.tasks.dlq
       BOOTSTRAP_KAFKA_TOPICS: "true"
     ports:
       - "8000:8000"
@@ -96,6 +102,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent
       REDIS_URL: redis://redis:6379/0
+      RELIABILITY_STORE: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       ARTIFACT_BASE_PATH: /data/artifacts
       ALLOWLIST_DOMAINS: example.com,example.org
@@ -103,6 +110,11 @@ services:
       MINIO_ACCESS_KEY: minio
       MINIO_SECRET_KEY: minio12345
       MINIO_BUCKET: browser-agent
+      TASK_CREATE_RATE_LIMIT_PER_MINUTE: 60
+      IDEMPOTENCY_TTL_SECONDS: 86400
+      TASK_LOCK_TTL_SECONDS: 300
+      WORKER_SERVICE_ID: worker-local
+      DLQ_TOPIC: agent.tasks.dlq
       BOOTSTRAP_KAFKA_TOPICS: "true"
     volumes:
       - artifacts:/data/artifacts
