@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 import browser_agent.api as api
 from browser_agent import models
 from browser_agent.api import create_app
-from browser_agent.auth import create_access_token, demo_actor_for_role
+from browser_agent.auth import create_access_token, local_dev_actor_for_role
 
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -38,10 +38,10 @@ def test_operator_cannot_create_task(monkeypatch):
     assert response.status_code == 403
 
 
-def test_demo_token_and_auth_me_return_actor_permissions():
+def test_local_token_and_auth_me_return_actor_permissions():
     client = TestClient(create_app())
 
-    token_response = client.post("/v1/auth/demo-token", json={"role": "operator"})
+    token_response = client.post("/v1/auth/local-token", json={"role": "operator"})
 
     assert token_response.status_code == 200
     token_body = token_response.json()
@@ -72,7 +72,7 @@ def test_creator_can_create_task_with_request_scoped_actor(monkeypatch):
     assert body["status"] == "pending_approval"
     task = session.first_added(models.Task)
     assert task.tenant_id == TENANT_ID
-    assert task.created_by == demo_actor_for_role("creator").user_id
+    assert task.created_by == local_dev_actor_for_role("creator").user_id
     audit = session.first_added(models.AuditLog)
     assert audit.actor == "creator@example.com"
 
@@ -101,12 +101,12 @@ def test_creator_cannot_approve_but_approver_can_and_audit_uses_token_actor(monk
 
     assert approved.status_code == 200
     assert task.status == "queued"
-    assert task.approved_by == demo_actor_for_role("approver").user_id
+    assert task.approved_by == local_dev_actor_for_role("approver").user_id
     approval = session.first_added(models.Approval)
     assert approval.approved_by == "approver@example.com"
     approved_audit = [entry for entry in session.added if isinstance(entry, models.AuditLog)][0]
     assert approved_audit.actor == "approver@example.com"
-    assert approved_audit.payload["actor_user_id"] == str(demo_actor_for_role("approver").user_id)
+    assert approved_audit.payload["actor_user_id"] == str(local_dev_actor_for_role("approver").user_id)
     assert approved_audit.payload["actor_email"] == "approver@example.com"
     assert approved_audit.payload["actor_roles"] == ["approver"]
     assert bus.published[0][2]["approved_by"] == "approver@example.com"
@@ -131,7 +131,7 @@ def test_admin_can_register_skill(monkeypatch):
         json={
             "name": "browser.goto",
             "version": "1.0.0",
-            "description": "demo",
+            "description": "local dev",
             "skill_type": "browser_action",
             "entrypoint": "browser.goto",
             "input_schema": {"type": "object"},
@@ -144,7 +144,7 @@ def test_admin_can_register_skill(monkeypatch):
     assert response.status_code == 200
     skill = session.first_added(models.Skill)
     assert skill.tenant_id == TENANT_ID
-    assert skill.created_by == demo_actor_for_role("admin").user_id
+    assert skill.created_by == local_dev_actor_for_role("admin").user_id
 
 
 def test_artifact_content_uses_token_tenant_for_access_check(monkeypatch):
@@ -180,7 +180,7 @@ def _task_payload() -> dict:
 
 
 def _token(role: str, *, expires_at: datetime | None = None) -> str:
-    return create_access_token(demo_actor_for_role(role), expires_at=expires_at)
+    return create_access_token(local_dev_actor_for_role(role), expires_at=expires_at)
 
 
 def _auth(token: str) -> dict:

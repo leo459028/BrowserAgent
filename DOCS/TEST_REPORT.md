@@ -2,18 +2,54 @@
 
 最後更新：2026-05-22
 
-## v0.6 Reliability Foundation 測試結果
+## V1.0 Operations Center 測試結果
 
 日期：2026-05-22
 
-本次完成 v0.6 Reliability Foundation：`Idempotency-Key`、task create rate limit、memory/Redis reliability store、worker service identity、task lock、DLQ metadata/replay API、v0.6 Dashboard Reliability / DLQ panel，以及 GitHub Actions CI workflow。
+本次完成 V1.0 MVP：Operations Center route、local dev token endpoint、optional JWKS auth、Operations Readiness、S3/MinIO artifact backend、DLQ bulk replay、DLQ quarantine、Replay-lite timeline，以及相關文件同步。
 
 ### Host 測試
 
-`pytest -q`
+Baseline 實作前：
 
 ```text
-47 passed, 2 warnings in 1.85s
+pytest -q -> 47 passed, 2 warnings in 5.18s
+```
+
+V1.0 RED tests：
+
+```text
+10 failed
+```
+
+失敗點符合預期，包含 `/operations` 尚不存在、local token endpoint 尚不存在、JWKS/S3/DLQ bulk/replay-lite 尚未實作。
+
+V1.0 targeted tests：
+
+```text
+pytest tests/test_v10_operations_ui.py tests/test_v10_auth_jwks.py tests/test_v10_artifacts_s3.py tests/test_v10_dlq_ops.py tests/test_v10_replay.py -q
+10 passed, 2 warnings in 2.30s
+```
+
+全套 host tests：
+
+```text
+pytest -q
+57 passed, 2 warnings in 3.29s
+```
+
+語法檢查：
+
+```text
+python -m compileall src tests worker alembic
+exit code 0
+```
+
+Diff whitespace：
+
+```text
+git diff --check
+exit code 0
 ```
 
 Warnings：
@@ -21,53 +57,25 @@ Warnings：
 - `pythonjsonlogger.jsonlogger` deprecation warning。
 - `.pytest_cache` 寫入 permission warning；測試通過，不影響結果。
 
-`python -m compileall src tests worker alembic`
+### V1.0 Test Coverage
 
-```text
-exit code 0
-```
-
-輸出確認 `src`、`tests`、`worker`、`alembic` 與 `alembic/versions/0002_v06_reliability_indexes.py` 都完成 compile scan。
-
-`git diff --check`
-
-```text
-exit code 0
-```
-
-### v0.6 Test Coverage
-
-新增 `tests/test_v06_reliability.py`，覆蓋：
-
-- same `Idempotency-Key` + same payload 回同一個 task，且 `agent.tasks.created` 只發布一次。
-- same `Idempotency-Key` + different payload 回 `409`。
-- task create rate limit exceeded 回 `429`。
-- `GET /v1/reliability` 僅 operator/admin 可查。
-- worker task lock 已存在時不重複執行。
-- worker final failure 會用 `service:<WORKER_SERVICE_ID>` actor、寫入 DLQ payload、發布 `agent.tasks.dlq`。
-- DLQ list/replay 僅 operator/admin 可用；replay 後 task 回 `queued`。
-- `/demo` render 包含 `Browser Agent v0.6 Dashboard`、`Reliability / DLQ`、`Idempotency`。
+- `/operations` render、V1.0 title、Operations Readiness、Artifact Backend、Bulk DLQ、Replay Timeline panels。
+- `/v1/auth/local-token`，舊 token route 不再是入口。
+- JWKS mode 驗證 RS256 token，並拒絕 bad issuer/audience/expired/bad roles。
+- `S3ArtifactStore` 寫入 governance metadata 並可讀回 bytes。
+- Artifact content endpoint 支援 S3 artifact。
+- DLQ bulk replay 會 replay pending tasks 並跳過 quarantined tasks。
+- DLQ quarantine 寫入 metadata 與 audit。
+- Replay-lite endpoint 合併 audit、steps、artifacts、evaluation。
 
 ### Docker 驗證
 
-Docker daemon 需要 elevated access；核准後 `docker info` 成功：
-
-```text
-Server Version: 29.4.1
-Operating System: Docker Desktop
-OSType: linux
+```powershell
+docker compose up -d --build
+docker compose exec -T api pytest -q
 ```
 
-`docker compose up -d --build`
-
-```text
-Image browseragent-api Built
-Image browseragent-worker Built
-Container browseragent-api-1 Started
-Container browseragent-worker-1 Started
-```
-
-第一次 `docker compose exec -T api pytest -q` 逾時，原因是 Kafka/Zookeeper stale session，Kafka log 顯示：
+第一次 `docker compose exec -T api pytest -q` 逾時，原因是既有 Kafka/Zookeeper stale broker session。Kafka log 顯示：
 
 ```text
 KeeperErrorCode = NodeExists
@@ -79,341 +87,79 @@ KeeperErrorCode = NodeExists
 docker compose restart zookeeper kafka api worker
 ```
 
-之後重新執行 container pytest 成功：
+重新執行 container pytest 成功：
 
 ```text
-47 passed in 2.20s
+57 passed in 2.73s
 ```
 
-### Docker API / Dashboard / Reliability Smoke
+### Docker Operations Smoke
 
 執行項目：
 
-- `GET /healthz`
-- `GET /readyz`
-- `GET /demo`
-- `POST /v1/auth/demo-token` for creator / approver / operator
-- `GET /v1/reliability`
-- creator `POST /v1/tasks` with `Idempotency-Key`
-- same key + same payload replay check
+- `GET /operations`
+- `POST /v1/auth/local-token` for creator / approver / operator
+- `GET /v1/ops/readiness`
+- creator `POST /v1/tasks`
 - approver `POST /v1/tasks/{task_id}/approve`
 - polling operator `GET /v1/tasks/{task_id}`
+- operator `GET /v1/tasks/{task_id}/replay`
 - operator `GET /v1/tasks/{task_id}/audit`
-- operator `GET /v1/dlq/tasks`
+- operator `GET /v1/artifacts/{artifact_id}/content`
+- operator `POST /v1/dlq/tasks/{task_id}/quarantine`
+- operator `POST /v1/dlq/tasks/bulk-replay`
 
 實際結果：
 
 ```json
 {
-  "health": "ok",
-  "ready": "ready",
-  "dashboardV06": true,
-  "reliabilityPanel": true,
-  "reliabilityBackend": "redis",
-  "reliabilityAvailable": true,
-  "workerServiceId": "worker-local",
-  "firstStatus": "pending_approval",
-  "secondSameTask": true,
-  "secondReplayed": true,
+  "operationsV10": true,
+  "readinessStatus": "ready",
+  "authMode": "local",
+  "artifactBackend": "s3",
+  "createdStatus": "pending_approval",
   "approvedStatus": "queued",
   "finalStatus": "completed",
   "artifactCount": 2,
-  "plannerValid": true,
-  "approvalActor": "approver@example.com",
-  "workerActor": "service:worker-local",
+  "firstArtifactBackend": "s3",
+  "artifactStatus": 200,
+  "artifactContentType": "image/png",
+  "replayEvents": 14,
+  "auditEvents": 9,
   "dlqCount": 0
 }
 ```
 
-### 文件同步
-
-已同步更新：
-
-- `README.md`
-- `DOCS/OVERVIEW.md`
-- `DOCS/API.md`
-- `DOCS/ARCHITECTURE.md`
-- `DOCS/CONFIGURATION.md`
-- `DOCS/DATA_MODEL.md`
-- `DOCS/DEVELOPMENT.md`
-- `DOCS/IMPLEMENTATION_STATUS.md`
-- `DOCS/OBSERVABILITY.md`
-- `DOCS/ROADMAP.md`
-- `DOCS/RUNBOOK.md`
-- `DOCS/SECURITY_AND_POLICY.md`
-- `DOCS/USE_CASES.md`
-- `DOCS/manual_test.md`
-- `DOCS/TEST_REPORT.md`
-
-### 目前限制
-
-- v0.6 仍未接外部 OIDC/JWKS；目前 JWT 是 local scaffold。
-- Active artifact backend 仍是 local filesystem；MinIO/S3 尚未成為 active artifact backend。
-- `/demo` 仍是本機測試 Dashboard，不是 production operator UI。
-- DLQ replay 是單 task API；尚未做 bulk replay、poison message review workflow 或 alerting。
-- Redis reliability store 在 Docker Compose 可用；production HA Redis、retention policy 與 monitoring 仍待 v1.0 設計。
-
-## 摘要
-
-v0.5 Auth/RBAC 與 Production Approval 實作後，已完成 host 端 pytest、compileall、diff check、Docker Compose build/start、container pytest，以及 Docker API/Dashboard/RBAC/worker/artifact smoke test。
-
-本次測試確認：
-
-- API 預設需要 Bearer token。
-- invalid/missing/expired token 回 `401`。
-- wrong role 回 `403`。
-- creator 可建立 task。
-- approver 可核准 task，audit actor 為 `approver@example.com`。
-- operator 可讀 metrics，不可建立 task。
-- admin 可註冊 SkillHub skill。
-- artifact content endpoint 使用 token tenant 做 access check。
-- `/demo` 顯示 `Browser Agent v0.5 Dashboard` 與 `Identity / RBAC` panel。
-
-## Host 測試結果
-
-日期：2026-05-21
-
-### `pytest -q`
-
-結果：
-
-```text
-39 passed, 2 warnings in 1.92s
-```
-
-Warnings：
-
-- `pythonjsonlogger.jsonlogger` deprecation warning。
-- `.pytest_cache` 寫入 permission warning：測試結果通過，但 sandbox 無法寫入部分 pytest cache 檔案。
-
-### `python -m compileall src tests worker alembic`
-
-結果：
-
-```text
-exit code 0
-```
-
-輸出顯示 `src`、`tests`、`worker`、`alembic` 皆完成 compile scan，未發現語法錯誤。
-
-### `git diff --check`
-
-結果：
-
-```text
-exit code 0
-```
-
-表示目前 diff 沒有 trailing whitespace 或 patch 格式問題。
-
-## v0.5 Test Coverage
-
-### `tests/test_v05_auth_rbac.py`
-
-覆蓋：
-
-- missing token、invalid token、expired token 回 `401`。
-- operator 建立 task 回 `403`。
-- `/v1/auth/demo-token` 與 `/v1/auth/me` 回傳 actor 與 permissions。
-- creator 建立 task 時，`tenant_id` 與 `created_by` 來自 token actor。
-- creator 不可 approve；approver 可 approve。
-- approval row、audit payload、Kafka queued event 使用 authenticated actor。
-- operator 可讀 `/metrics`；creator 讀 `/metrics` 回 `403`。
-- admin 可註冊 SkillHub skill。
-- artifact content 使用 token tenant 做 access check，tenant mismatch 回 `403`。
-
-### Updated regression tests
-
-- `tests/test_v01_demo.py` 已更新為 v0.5 Dashboard rendering，並在 task list / audit API 測試中使用 Bearer token。
-- v0.1-v0.4 既有 tests 維持通過。
-
-## Docker 驗證
-
-日期：2026-05-21
-
-### Docker availability
-
-第一次在 sandbox 內執行 `docker info` 因 Docker API permission 被擋：
-
-```text
-permission denied while trying to connect to the docker API
-```
-
-改用核准後的 Docker daemon access 執行成功：
-
-```text
-Server Version: 29.4.1
-Operating System: Docker Desktop
-OSType: linux
-```
-
-### `docker compose up -d --build`
-
-結果：
-
-```text
-Image browseragent-api Built
-Image browseragent-worker Built
-Container browseragent-postgres-1 Started
-Container browseragent-redis-1 Started
-Container browseragent-kafka-1 Started
-Container browseragent-api-1 Started
-Container browseragent-worker-1 Started
-```
-
-Build log 確認 `PyJWT-2.12.1` 已安裝進 container image。
-
-### Bootstrap 問題與修正
-
-Docker 驗證第一次發現 `api` service 退出，原因是 API 與 worker 同時執行 `scripts/bootstrap.py`，新增多個 demo users 時發生 duplicate key race：
-
-```text
-psycopg.errors.UniqueViolation: duplicate key value violates unique constraint "users_pkey"
-```
-
-修正方式：
-
-- `scripts/bootstrap.py` 改用 PostgreSQL `INSERT ... ON CONFLICT` upsert seed demo tenant/users。
-
-第二次啟動又發現既有 Docker volume 的 `created_at` 欄位是 NOT NULL 且沒有 database-level default：
-
-```text
-psycopg.errors.NotNullViolation: null value in column "created_at" of relation "tenants"
-```
-
-修正方式：
-
-- upsert tenant/users 時明確提供 `created_at` timestamp。
-
-修正後重新執行：
-
-```text
-docker compose up -d --build -> exit code 0
-```
-
-### `docker compose exec -T api pytest -q`
-
-結果：
-
-```text
-39 passed in 1.68s
-```
-
-## Docker API / Dashboard / RBAC Smoke
-
-執行項目：
-
-- `GET /healthz`
-- `GET /readyz`
-- `POST /v1/auth/demo-token` for creator / approver / operator / admin
-- `GET /v1/auth/me` with operator token
-- `GET /demo`
-- `GET /metrics` with operator token
-- operator `POST /v1/tasks` forbidden check
-- creator `POST /v1/tasks`
-- approver `POST /v1/tasks/{task_id}/approve`
-- polling operator `GET /v1/tasks/{task_id}`
-- operator `GET /v1/tasks/{task_id}/audit`
-- operator `GET /v1/artifacts/{artifact_id}/content`
-
-結果：
+DLQ bulk/quarantine smoke：
 
 ```json
 {
-  "health": "ok",
-  "ready": "ready",
-  "dashboardV05": true,
-  "identityPanel": true,
-  "operatorEmail": "operator@example.com",
-  "metricsStatus": 200,
-  "forbiddenCreateStatus": 403,
-  "createdStatus": "pending_approval",
-  "approvedStatus": "queued",
-  "finalStatus": "completed",
-  "plannerValid": true,
-  "fallbackUsed": false,
-  "artifactCount": 2,
-  "artifactStatus": 200,
-  "artifactContentType": "image/png",
-  "approvalActor": "approver@example.com"
+  "quarantinedStatus": "quarantined",
+  "replayedCount": 1,
+  "skippedCount": 1,
+  "skippedReason": "quarantined",
+  "replayedStatus": "queued"
 }
 ```
 
-## Dashboard 驗證結果
+### 目前限制
 
-HTTP 驗證：
+- V1.0 有 JWKS verifier，但尚未做完整 IdP login / OIDC discovery flow。
+- 尚未做 Kubernetes/Helm、secrets vault、OpenTelemetry tracing。
+- Replay-lite 不含 browser session 錄影或 DOM stream。
 
-```powershell
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/demo
-```
+## 2026-05-23 Architecture image archive
 
-頁面文字檢查結果：
+Change scope:
+- Archived generated architecture image to `DOCS/assets/browseragent-architecture.png`.
+- Added image reference/path notes to `DOCS/ARCHITECTURE.md`, `DOCS/OVERVIEW.md`, and the README technical documentation section.
 
-```text
-PASS Browser Agent v0.5 Dashboard
-PASS Identity / RBAC
-PASS production approval
-PASS Planner
-PASS SkillHub
-PASS Artifact Query
-```
+Commands and results:
+- `Test-Path DOCS\assets\browseragent-architecture.png` -> `True`
+- `Get-Item DOCS\assets\browseragent-architecture.png | Select-Object FullName,Length` -> `Length: 1579844`
+- `Test-Path (Join-Path (Resolve-Path DOCS) 'assets\browseragent-architecture.png')` -> `True`
+- `git diff --check` -> passed with exit code 0
 
-Dashboard artifact preview 在 v0.5 會透過 JS fetch 帶 operator token 讀取 content endpoint；直接用 `<img src="/v1/artifacts/...">` 已不再適用，因為 artifact endpoint 需要 Bearer token。
-
-## 文件同步檢查
-
-已同步更新：
-
-- `README.md`
-- `DOCS/OVERVIEW.md`
-- `DOCS/API.md`
-- `DOCS/ARCHITECTURE.md`
-- `DOCS/CONFIGURATION.md`
-- `DOCS/DATA_MODEL.md`
-- `DOCS/DEVELOPMENT.md`
-- `DOCS/IMPLEMENTATION_STATUS.md`
-- `DOCS/OBSERVABILITY.md`
-- `DOCS/ROADMAP.md`
-- `DOCS/RUNBOOK.md`
-- `DOCS/SECURITY_AND_POLICY.md`
-- `DOCS/TEST_REPORT.md`
-- `DOCS/USE_CASES.md`
-
-文件已更新為 v0.5 Auth/RBAC、production approval、demo JWT、role permissions、Dashboard v0.5 與測試數量。
-
-## 其他觀察
-
-- Host 端 pytest 仍有 `.pytest_cache` permission warning，測試結果不受影響。
-- Docker Compose stack 使用既有 volumes；本次修正讓 bootstrap 在重複與並行執行時可安全 upsert demo tenant/users。
-- v0.5 仍未接外部 OIDC/JWKS；目前 JWT 是 local scaffold。
-
-## AGENTS.md 文件保留規範更新
-
-日期：2026-05-21
-
-本次依使用者要求更新根目錄 `AGENTS.md`，新增文件維護規範：更新全部文件時，舊內容除非錯誤、過期、重複到造成誤解，或與目前程式碼/路由/欄位/測試結果衝突，否則應保留版本演進脈絡；若確實刪除舊內容，需交代原因。
-
-此變更只修改文件規範，未修改程式碼，因此未重新執行完整 `pytest`、`compileall` 或 Docker 驗證。
-
-實際驗證結果：
-
-```text
-rg -n "舊內容|版本如何演進|若確實需要刪除舊內容" AGENTS.md -> found required guidance
-git diff --check -> passed
-```
-
-## Manual Test 文件新增
-
-日期：2026-05-21
-
-本次新增 `DOCS/manual_test.md`，把 V0.5 Dashboard 手動測試流程整理成可照著操作的繁體中文文件。內容涵蓋 Docker 啟動、`/demo` 開啟、Identity/RBAC、`Try operator create` forbidden case、Normal planner task、approval、Planner/SkillHub、artifact query、fallback planner、blocked domain，以及最小合格檢查清單。
-
-此變更只新增手動測試文件，未修改程式碼，因此未重新執行完整 `pytest`、`compileall` 或 Docker 驗證。
-
-實際驗證結果：
-
-```text
-Test-Path DOCS/manual_test.md -> True
-rg -n "Browser Agent v0.5 Dashboard|Identity / RBAC|Try operator create|pending_approval|Approve selected|Artifact Query" DOCS/manual_test.md -> found required guidance
-git diff --check -> passed
-```
+Limitations:
+- No Docker verification was needed because this change only archives a static documentation image and updates Markdown references.
+- One sandbox-only attempt to run a path check with `DOCS` as the command working directory failed during Windows sandbox setup; the equivalent root-workspace path check passed.
