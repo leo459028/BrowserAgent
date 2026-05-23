@@ -8,14 +8,15 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
+from urllib.request import urlopen
 
 from fastapi import Depends, HTTPException, Request
 
 from .config import Settings, get_settings
 
-DEMO_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+LOCAL_DEV_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
-DEMO_ACTORS = {
+LOCAL_DEV_ACTORS = {
     "admin": {
         "user_id": uuid.UUID("00000000-0000-0000-0000-000000000002"),
         "email": "ops@example.com",
@@ -37,6 +38,8 @@ DEMO_ACTORS = {
         "roles": ("operator",),
     },
 }
+
+RSA_SHA256_DER_PREFIX = bytes.fromhex("3031300d060960864801650304020105000420")
 
 ROLE_PERMISSIONS = {
     "creator": {
@@ -98,13 +101,13 @@ def permissions_for_roles(roles: Iterable[str]) -> set[str]:
     return permissions
 
 
-def demo_actor_for_role(role: str) -> ActorContext:
-    spec = DEMO_ACTORS.get(role)
+def local_dev_actor_for_role(role: str) -> ActorContext:
+    spec = LOCAL_DEV_ACTORS.get(role)
     if not spec:
-        raise ValueError(f"unknown demo role {role}")
+        raise ValueError(f"unknown local dev role {role}")
     return ActorContext(
         user_id=spec["user_id"],
-        tenant_id=DEMO_TENANT_ID,
+        tenant_id=LOCAL_DEV_TENANT_ID,
         email=spec["email"],
         roles=tuple(spec["roles"]),
     )
@@ -134,7 +137,10 @@ def create_access_token(
 
 def decode_access_token(token: str, *, settings: Settings | None = None) -> ActorContext:
     settings = settings or get_settings()
-    payload = _decode_jwt(token, settings.app_secret_key)
+    if getattr(settings, "auth_mode", "local").lower() == "jwks":
+        payload = _decode_jwks_jwt(token, settings)
+    else:
+        payload = _decode_jwt(token, settings.app_secret_key)
     if payload.get("iss") != settings.auth_jwt_issuer:
         raise ValueError("invalid token issuer")
     if payload.get("aud") != settings.auth_jwt_audience:
@@ -155,8 +161,8 @@ def decode_access_token(token: str, *, settings: Settings | None = None) -> Acto
 
 def get_current_actor(request: Request) -> ActorContext:
     settings = get_settings()
-    if not settings.auth_enabled:
-        return demo_actor_for_role("admin")
+    if not getattr(settings, "auth_enabled", True):
+        return local_dev_actor_for_role("admin")
     authorization = request.headers.get("Authorization")
     if not authorization or not authorization.startswith("Bearer "):
         raise _auth_error("missing bearer token")
@@ -207,6 +213,50 @@ def _decode_jwt(token: str, secret: str) -> dict:
     if header.get("alg") != "HS256":
         raise ValueError("unsupported jwt alg")
     return json.loads(_b64url_decode(parts[1]))
+
+
+def _decode_jwks_jwt(token: str, settings: Settings) -> dict:
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise ValueError("invalid jwt format")
+    header = json.loads(_b64url_decode(parts[0]))
+    if header.get("alg") != "RS256":
+        raise ValueError("unsupported jwt alg")
+    jwk = _select_jwk(_fetch_jwks(settings), header.get("kid"))
+    signing_input = ".".join(parts[:2]).encode("ascii")
+    signature = _b64url_decode(parts[2])
+    if not _verify_rs256(signing_input, signature, jwk):
+        raise ValueError("invalid jwt signature")
+    return json.loads(_b64url_decode(parts[1]))
+
+
+def _fetch_jwks(settings: Settings) -> dict:
+    if not settings.auth_jwks_url:
+        raise ValueError("AUTH_JWKS_URL is required in jwks auth mode")
+    with urlopen(settings.auth_jwks_url, timeout=5) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _select_jwk(jwks: dict, kid: str | None) -> dict:
+    keys = jwks.get("keys")
+    if not isinstance(keys, list):
+        raise ValueError("invalid jwks")
+    for key in keys:
+        if key.get("kty") == "RSA" and (kid is None or key.get("kid") == kid):
+            return key
+    raise ValueError("jwks key not found")
+
+
+def _verify_rs256(signing_input: bytes, signature: bytes, jwk: dict) -> bool:
+    n = int.from_bytes(_b64url_decode(jwk["n"]), "big")
+    e = int.from_bytes(_b64url_decode(jwk["e"]), "big")
+    key_bytes = (n.bit_length() + 7) // 8
+    if len(signature) != key_bytes:
+        return False
+    decoded = pow(int.from_bytes(signature, "big"), e, n).to_bytes(key_bytes, "big")
+    digest_info = RSA_SHA256_DER_PREFIX + hashlib.sha256(signing_input).digest()
+    expected = b"\x00\x01" + (b"\xff" * (key_bytes - len(digest_info) - 3)) + b"\x00" + digest_info
+    return hmac.compare_digest(decoded, expected)
 
 
 def _b64url_json(value: dict) -> str:

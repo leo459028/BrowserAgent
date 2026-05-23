@@ -134,7 +134,7 @@ def test_approval_moves_pending_approval_task_to_queued():
         task,
         approved_by_user_id=ACTOR_ID,
         approved_by_label="ops@example.com",
-        note="local demo",
+        note="local dev",
     )
 
     assert approval.approved_by == "ops@example.com"

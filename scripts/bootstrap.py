@@ -16,7 +16,7 @@ from browser_agent import models  # noqa: F401
 DEFAULT_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 DEFAULT_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
 DEFAULT_USER_EMAIL = "ops@example.com"
-DEMO_USERS = [
+LOCAL_DEV_USERS = [
     (DEFAULT_USER_ID, DEFAULT_USER_EMAIL, "admin"),
     (uuid.UUID("00000000-0000-0000-0000-000000000003"), "creator@example.com", "creator"),
     (uuid.UUID("00000000-0000-0000-0000-000000000004"), "approver@example.com", "approver"),
@@ -44,7 +44,7 @@ def wait_for_database(max_attempts: int = 30, delay_seconds: float = 2.0):
             time.sleep(delay_seconds)
     raise RuntimeError("database did not become ready") from last_error
 
-def seed_demo_identity() -> None:
+def seed_local_dev_identity() -> None:
     session: Session = get_session_factory()()
     try:
         created_at = datetime.now(timezone.utc)
@@ -64,7 +64,7 @@ def seed_demo_identity() -> None:
             },
         )
 
-        for user_id, email, role in DEMO_USERS:
+        for user_id, email, role in LOCAL_DEV_USERS:
             session.execute(
                 text("""
                     INSERT INTO users (id, tenant_id, email, role, created_at)
@@ -115,13 +115,46 @@ def create_kafka_topics(bootstrap_servers: str, max_attempts: int = 30, delay_se
             time.sleep(delay_seconds)
     raise RuntimeError("kafka did not become ready") from last_error
 
+
+def ensure_s3_bucket(settings, max_attempts: int = 30, delay_seconds: float = 2.0) -> None:
+    if settings.artifact_backend.lower() != "s3":
+        return
+    import boto3
+    from botocore.config import Config
+
+    endpoint_url = settings.minio_endpoint
+    if "://" not in endpoint_url:
+        endpoint_url = f"http://{endpoint_url}"
+    client = boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        aws_access_key_id=settings.minio_access_key,
+        aws_secret_access_key=settings.minio_secret_key,
+        config=Config(s3={"addressing_style": "path"}),
+    )
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            try:
+                client.head_bucket(Bucket=settings.minio_bucket)
+            except Exception:
+                client.create_bucket(Bucket=settings.minio_bucket)
+            print(f"s3 bucket ready: {settings.minio_bucket}", flush=True)
+            return
+        except Exception as exc:
+            last_error = exc
+            print(f"s3 bucket not ready ({attempt}/{max_attempts}): {exc}", flush=True)
+            time.sleep(delay_seconds)
+    raise RuntimeError("s3 bucket did not become ready") from last_error
+
 def main():
     settings = get_settings()
     wait_for_database()
-    seed_demo_identity()
+    seed_local_dev_identity()
+    ensure_s3_bucket(settings)
     if os.getenv("BOOTSTRAP_KAFKA_TOPICS", "").lower() in {"1", "true", "yes"}:
         create_kafka_topics(settings.kafka_bootstrap_servers)
-    print("demo bootstrap complete")
+    print("operations bootstrap complete")
 
 if __name__ == "__main__":
     main()
