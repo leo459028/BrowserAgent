@@ -12,11 +12,11 @@ from fastapi.testclient import TestClient
 import browser_agent.api as api
 from browser_agent import models
 from browser_agent.api import create_app, resolve_artifact_file_path, serialize_task
-from browser_agent.auth import create_access_token, demo_actor_for_role
+from browser_agent.auth import create_access_token, local_dev_actor_for_role
 from browser_agent.orchestrator import Orchestrator
 
 
-def test_approval_records_demo_user_uuid_on_task_and_display_actor_on_approval():
+def test_approval_records_local_dev_user_uuid_on_task_and_display_actor_on_approval():
     actor_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
     task = SimpleNamespace(
         id=uuid.uuid4(),
@@ -32,7 +32,7 @@ def test_approval_records_demo_user_uuid_on_task_and_display_actor_on_approval()
         task,
         approved_by_user_id=actor_id,
         approved_by_label="ops@example.com",
-        note="local demo",
+        note="local dev",
     )
 
     assert task.approved_by == actor_id
@@ -115,13 +115,13 @@ def test_resolve_artifact_file_path_rejects_paths_outside_base(tmp_path: Path):
     assert exc.value.status_code == 403
 
 
-def test_demo_route_renders_console():
+def test_operations_route_renders_center():
     client = TestClient(create_app())
 
-    response = client.get("/demo")
+    response = client.get("/operations")
 
     assert response.status_code == 200
-    assert "Browser Agent v0.6 Dashboard" in response.text
+    assert "Browser Agent v1.0 Operations Center" in response.text
     assert "Reliability / DLQ" in response.text
     assert "Idempotency" in response.text
     assert "Identity / RBAC" in response.text
@@ -253,5 +253,5 @@ class _FakeQueryResult:
 
 
 def _auth(role: str) -> dict:
-    token = create_access_token(demo_actor_for_role(role))
+    token = create_access_token(local_dev_actor_for_role(role))
     return {"Authorization": f"Bearer {token}"}

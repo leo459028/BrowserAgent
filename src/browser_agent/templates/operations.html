@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Browser Agent v0.6 Dashboard</title>
+  <title>Browser Agent v1.0 Operations Center</title>
   <style>
     :root {
       color-scheme: light;
@@ -197,18 +197,28 @@
   <main>
     <header>
       <div>
-        <h1>Browser Agent v0.6 Dashboard</h1>
-        <div class="muted">Local dashboard for Reliability / DLQ, Identity/RBAC, production approval, Planner validation, SkillHub resolution, metrics, audit, and artifact governance.</div>
+        <h1>Browser Agent v1.0 Operations Center</h1>
+        <div class="muted">Operations center for readiness, Reliability / DLQ, Identity/RBAC, production approval, Planner validation, SkillHub resolution, metrics, audit, replay, and artifact governance.</div>
       </div>
       <div class="toolbar">
         <button id="refresh" class="secondary">Refresh</button>
-        <button id="register-skills" class="secondary">Register demo skills</button>
+        <button id="register-skills" class="secondary">Register built-in skills</button>
         <button id="approve" disabled>Approve selected</button>
       </div>
     </header>
 
     <div class="layout">
       <div class="stack">
+        <section>
+          <h2>Operations Readiness</h2>
+          <div class="kv">
+            <div class="label">Status</div><div><span id="ops-readiness" class="status">checking</span></div>
+            <div class="label">Auth</div><div id="ops-auth" class="value">-</div>
+            <div class="label">Artifact Backend</div><div id="ops-artifact-backend" class="value">-</div>
+            <div class="label">Warnings</div><div id="ops-warnings" class="value">-</div>
+          </div>
+        </section>
+
         <section>
           <h2>Create Task</h2>
           <div class="button-row">
@@ -248,6 +258,7 @@
           <div class="button-row">
             <button id="idempotency-smoke" class="secondary">Idempotency smoke</button>
             <button id="refresh-dlq" class="secondary">Refresh DLQ</button>
+            <button id="bulk-replay-dlq" class="secondary">Bulk DLQ replay</button>
           </div>
           <div class="kv" style="margin-top:12px">
             <div class="label">Store</div><div id="reliability-store" class="value">-</div>
@@ -327,6 +338,11 @@
         </section>
 
         <section>
+          <h2>Replay Timeline</h2>
+          <div id="replay-timeline" class="muted">Select a task to inspect replay timeline.</div>
+        </section>
+
+        <section>
           <h2>Steps</h2>
           <div id="steps" class="muted">No steps yet.</div>
         </section>
@@ -340,8 +356,8 @@
   </main>
 
   <script>
-    const demoRoles = {{ demo_roles | tojson }};
-    const defaultPayload = {{ demo_payload | tojson }};
+    const availableRoles = {{ available_roles | tojson }};
+    const defaultPayload = {{ default_payload | tojson }};
     const statuses = ["created", "pending_approval", "queued", "executing", "completed", "review", "failed", "blocked"];
     const scenarios = {
       allowlisted: {
@@ -363,7 +379,7 @@
       },
       skillhubResolved: {
         label: "SkillHub resolved task",
-        help: "Expected: after registering demo skills, browser.goto and browser.screenshot resolve through SkillHub.",
+        help: "Expected: after registering built-in skills, browser.goto and browser.screenshot resolve through SkillHub.",
         payload: {
           ...defaultPayload,
           title: "SkillHub resolved verification",
@@ -427,7 +443,7 @@
     let currentArtifacts = [];
     let pollTimer = null;
     let activeRole = "creator";
-    const demoTokens = {};
+    const localTokens = {};
     const objectUrls = new Map();
 
     const $ = (id) => document.getElementById(id);
@@ -447,8 +463,8 @@
     }
 
     async function ensureToken(role = activeRole) {
-      if (demoTokens[role]) return demoTokens[role];
-      const response = await fetch("/v1/auth/demo-token", {
+      if (localTokens[role]) return localTokens[role];
+      const response = await fetch("/v1/auth/local-token", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({role}),
@@ -457,8 +473,8 @@
         const text = await response.text();
         throw new Error(`${response.status} ${response.statusText}: ${text}`);
       }
-      demoTokens[role] = await response.json();
-      return demoTokens[role];
+      localTokens[role] = await response.json();
+      return localTokens[role];
     }
 
     async function authHeaders(role = activeRole, headers = {}) {
@@ -532,6 +548,20 @@
       }
     }
 
+    async function refreshReadiness() {
+      try {
+        const info = await getJson("/v1/ops/readiness", {}, "operator");
+        setStatus("ops-readiness", info.status);
+        $("ops-auth").textContent = `${info.auth.mode} · local tokens ${info.auth.local_tokens_enabled ? "enabled" : "disabled"}`;
+        const backend = info.checks?.artifact_backend || {};
+        $("ops-artifact-backend").textContent = backend.backend === "s3" ? `s3 · ${backend.bucket}` : `local · ${backend.base_path || "-"}`;
+        $("ops-warnings").textContent = (info.warnings || []).join("; ") || "none";
+      } catch (error) {
+        setStatus("ops-readiness", "error");
+        $("ops-warnings").textContent = error.message;
+      }
+    }
+
     async function refreshReliability() {
       try {
         const info = await getJson("/v1/reliability", {}, "operator");
@@ -555,7 +585,7 @@
 
     async function runIdempotencySmoke() {
       $("idempotency-smoke").disabled = true;
-      const key = `demo-${Date.now()}`;
+        const key = `ops-${Date.now()}`;
       const payload = currentPayload();
       try {
         const first = await getJson("/v1/tasks", {
@@ -619,7 +649,7 @@
         await getJson(`/v1/tasks/${currentTaskId}/approve`, {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({note: "Approved from local v0.6 dashboard"}),
+          body: JSON.stringify({note: "Approved from Operations Center"}),
         }, "approver");
         await refreshTask();
         await refreshTasks();
@@ -655,8 +685,18 @@
       }
     }
 
+    async function refreshReplay() {
+      if (!currentTaskId) return;
+      try {
+        const replay = await getJson(`/v1/tasks/${currentTaskId}/replay`, {}, "operator");
+        renderReplay(replay.timeline || []);
+      } catch (error) {
+        $("replay-timeline").innerHTML = `<span class="error-text">${escapeHtml(error.message)}</span>`;
+      }
+    }
+
     async function refreshAll() {
-      await Promise.all([checkRuntime(), refreshMetrics(), refreshTasks(), refreshReliability(), refreshDlq()]);
+      await Promise.all([checkRuntime(), refreshReadiness(), refreshMetrics(), refreshTasks(), refreshReliability(), refreshDlq()]);
     }
 
     function renderTask(task) {
@@ -673,15 +713,16 @@
       renderPlanner(task);
       renderSteps(task.steps || []);
       renderArtifacts(task.artifacts || []);
+      refreshReplay();
       refreshTasks();
     }
 
-    async function registerDemoSkills() {
+    async function registerBuiltInSkills() {
       const skills = [
         {
           name: "browser.goto",
           version: "1.0.0",
-          description: "Built-in browser goto action for v0.6 Dashboard testing.",
+          description: "Built-in browser goto action for v1.0 Operations Center testing.",
           skill_type: "browser_action",
           entrypoint: "browser.goto",
           input_schema: {"type": "object", "required": ["url"]},
@@ -691,7 +732,7 @@
         {
           name: "browser.screenshot",
           version: "1.0.0",
-          description: "Built-in browser screenshot action for v0.6 Dashboard testing.",
+          description: "Built-in browser screenshot action for v1.0 Operations Center testing.",
           skill_type: "browser_action",
           entrypoint: "browser.screenshot",
           input_schema: {"type": "object"},
@@ -708,7 +749,7 @@
             body: JSON.stringify(skill),
           }, "admin");
         }
-        $("scenario-help").textContent = "Demo SkillHub skills registered. Create or rerun the SkillHub resolved task.";
+        $("scenario-help").textContent = "Built-in SkillHub skills registered. Create or rerun the SkillHub resolved task.";
       } catch (error) {
         $("scenario-help").textContent = error.message;
       } finally {
@@ -801,6 +842,26 @@
       }
     }
 
+    async function bulkReplayDlq() {
+      try {
+        const tasks = await getJson("/v1/dlq/tasks?limit=10", {}, "operator");
+        const taskIds = tasks.filter((task) => task.dlq?.status !== "quarantined").map((task) => task.task_id);
+        if (!taskIds.length) {
+          $("idempotency-result").textContent = "No replayable DLQ tasks.";
+          return;
+        }
+        const result = await getJson("/v1/dlq/tasks/bulk-replay", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({task_ids: taskIds, note: "Bulk replay from Operations Center"}),
+        }, "operator");
+        $("idempotency-result").textContent = `Bulk replay queued · ${result.replayed.length} replayed · ${result.skipped.length} skipped`;
+        await refreshAll();
+      } catch (error) {
+        $("idempotency-result").textContent = error.message;
+      }
+    }
+
     function renderAudit(entries) {
       if (!entries.length) {
         $("audit").innerHTML = '<span class="muted">No audit events yet.</span>';
@@ -814,6 +875,29 @@
           <td><pre>${escapeHtml(JSON.stringify(entry.payload || {}, null, 2))}</pre></td>
         </tr>
       `).join("")}</tbody></table>`;
+    }
+
+    function renderReplay(entries) {
+      if (!entries.length) {
+        $("replay-timeline").innerHTML = '<span class="muted">No replay events yet.</span>';
+        return;
+      }
+      $("replay-timeline").innerHTML = `<table><thead><tr><th>Time</th><th>Kind</th><th>Summary</th></tr></thead><tbody>${entries.map((entry) => {
+        const summary = entry.kind === "step"
+          ? `${entry.step_no}. ${entry.action_type} · ${entry.status}`
+          : entry.kind === "artifact"
+            ? `${entry.artifact?.artifact_type || "-"} · ${entry.artifact?.backend || "-"}`
+            : entry.kind === "evaluation"
+              ? `${entry.verdict} · ${entry.score}`
+              : `${entry.action || "-"}`;
+        return `
+          <tr>
+            <td>${escapeHtml(new Date(entry.created_at).toLocaleTimeString())}</td>
+            <td>${escapeHtml(entry.kind)}</td>
+            <td>${escapeHtml(summary)}</td>
+          </tr>
+        `;
+      }).join("")}</tbody></table>`;
     }
 
     function renderSteps(steps) {
@@ -966,7 +1050,7 @@
       option.textContent = scenario.label;
       $("scenario").append(option);
     });
-    demoRoles.forEach((role) => {
+    availableRoles.forEach((role) => {
       const option = document.createElement("option");
       option.value = role;
       option.textContent = role;
@@ -981,8 +1065,9 @@
     $("forbidden-create").addEventListener("click", tryForbiddenCreate);
     $("idempotency-smoke").addEventListener("click", runIdempotencySmoke);
     $("refresh-dlq").addEventListener("click", refreshDlq);
+    $("bulk-replay-dlq").addEventListener("click", bulkReplayDlq);
     $("create-task").addEventListener("click", createTask);
-    $("register-skills").addEventListener("click", registerDemoSkills);
+    $("register-skills").addEventListener("click", registerBuiltInSkills);
     $("approve").addEventListener("click", approveSelected);
     $("refresh").addEventListener("click", refreshAll);
     $("artifact-select").addEventListener("change", () => renderArtifactQuery($("artifact-select").value));

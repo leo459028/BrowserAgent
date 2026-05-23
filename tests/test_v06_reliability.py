@@ -10,7 +10,7 @@ import browser_agent.api as api
 import worker.consumer as consumer
 from browser_agent import models
 from browser_agent.api import create_app
-from browser_agent.auth import create_access_token, demo_actor_for_role
+from browser_agent.auth import create_access_token, local_dev_actor_for_role
 
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -25,14 +25,14 @@ def test_task_create_idempotency_replays_same_task_without_republishing(monkeypa
     app.dependency_overrides[api.get_session] = lambda: session
     client = TestClient(app)
 
-    headers = {**_auth(_token("creator")), "Idempotency-Key": "demo-key-1"}
+    headers = {**_auth(_token("creator")), "Idempotency-Key": "ops-key-1"}
     first = client.post("/v1/tasks", json=_task_payload(), headers=headers)
     second = client.post("/v1/tasks", json=_task_payload(), headers=headers)
 
     assert first.status_code == 200
     assert second.status_code == 200
     assert second.json()["task_id"] == first.json()["task_id"]
-    assert second.json()["idempotency"] == {"key": "demo-key-1", "replayed": True}
+    assert second.json()["idempotency"] == {"key": "ops-key-1", "replayed": True}
     assert [event[0] for event in bus.published].count("agent.tasks.created") == 1
 
 
@@ -44,7 +44,7 @@ def test_task_create_idempotency_key_conflict_returns_409(monkeypatch):
     app.dependency_overrides[api.get_session] = lambda: session
     client = TestClient(app)
 
-    headers = {**_auth(_token("creator")), "Idempotency-Key": "demo-key-conflict"}
+    headers = {**_auth(_token("creator")), "Idempotency-Key": "ops-key-conflict"}
     first = client.post("/v1/tasks", json=_task_payload(), headers=headers)
     changed = _task_payload()
     changed["instructions"] = "Open the allowlisted site and capture HTML only."
@@ -158,13 +158,13 @@ def test_dlq_list_and_replay_are_operator_only(monkeypatch):
     assert bus.published[0][0] == "agent.tasks.queued"
 
 
-def test_demo_dashboard_renders_v06_reliability_panel():
+def test_operations_center_renders_reliability_panel():
     client = TestClient(create_app())
 
-    response = client.get("/demo")
+    response = client.get("/operations")
 
     assert response.status_code == 200
-    assert "Browser Agent v0.6 Dashboard" in response.text
+    assert "Browser Agent v1.0 Operations Center" in response.text
     assert "Reliability / DLQ" in response.text
     assert "Idempotency" in response.text
 
@@ -187,13 +187,13 @@ def _failed_dlq_task():
     return SimpleNamespace(
         id=uuid.uuid4(),
         tenant_id=TENANT_ID,
-        created_by=demo_actor_for_role("creator").user_id,
+        created_by=local_dev_actor_for_role("creator").user_id,
         title="Failed task",
         instructions="Open the allowlisted site.",
         priority=1,
         risk_level="low",
         status="failed",
-        approved_by=demo_actor_for_role("approver").user_id,
+        approved_by=local_dev_actor_for_role("approver").user_id,
         approved_at=None,
         planned_at=None,
         started_at=None,
@@ -219,7 +219,7 @@ def _failed_dlq_task():
 
 
 def _token(role: str) -> str:
-    return create_access_token(demo_actor_for_role(role))
+    return create_access_token(local_dev_actor_for_role(role))
 
 
 def _auth(token: str) -> dict:

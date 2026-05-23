@@ -13,8 +13,15 @@ class TaskApproveRequest(BaseModel):
     approved_by: str | None = None
     note: str | None = None
 
-class DemoTokenRequest(BaseModel):
+class LocalTokenRequest(BaseModel):
     role: str
+
+class DlqBulkReplayRequest(BaseModel):
+    task_ids: list[UUID]
+    note: str | None = None
+
+class DlqQuarantineRequest(BaseModel):
+    reason: str
 
 class SkillCreateRequest(BaseModel):
     name: str

@@ -5,18 +5,22 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "browser-agent"
+    app_version: str = "1.0.0"
     app_env: str = "local"
     app_log_level: str = "INFO"
     app_secret_key: str = "change-me"
     auth_enabled: bool = True
+    auth_mode: str = "local"
     auth_jwt_issuer: str = "browser-agent-local"
     auth_jwt_audience: str = "browser-agent-api"
+    auth_jwks_url: str = ""
     auth_token_ttl_seconds: int = 3600
-    auth_demo_tokens_enabled: bool = True
+    auth_local_tokens_enabled: bool = True
 
     database_url: str = "postgresql+psycopg://agent:agent@localhost:5432/agent"
     redis_url: str = "redis://localhost:6379/0"
     kafka_bootstrap_servers: str = ""
+    artifact_backend: str = "local"
     artifact_base_path: str = "/tmp/browser-agent/artifacts"
     reliability_store: str = "memory"
 

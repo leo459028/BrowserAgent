@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, Body, Depends, FastAPI, Header, HTTPException
 from fastapi import Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,8 +17,15 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from .config import get_settings
 from .db import get_session_factory
 from . import models
-from .auth import ActorContext, create_access_token, demo_actor_for_role, get_current_actor, require_roles
-from .schemas import DemoTokenRequest, TaskCreateRequest, TaskApproveRequest, SkillCreateRequest
+from .auth import ActorContext, create_access_token, local_dev_actor_for_role, get_current_actor, require_roles
+from .schemas import (
+    DlqBulkReplayRequest,
+    DlqQuarantineRequest,
+    LocalTokenRequest,
+    TaskCreateRequest,
+    TaskApproveRequest,
+    SkillCreateRequest,
+)
 from .orchestrator import Orchestrator
 from .skillhub import SkillHub
 from .kafka import get_bus
@@ -25,6 +33,7 @@ from .logging import configure_logging
 from .audit import write_audit
 from .reliability import get_reliability_store
 from .services.tasks import set_task_status
+from .services.artifacts import build_artifact_store_from_settings
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -36,7 +45,7 @@ def get_session():
     finally:
         session.close()
 
-DEMO_TASK_PAYLOAD = {
+DEFAULT_TASK_PAYLOAD = {
     "title": "Capture example.com",
     "instructions": "Open the allowlisted site and capture a screenshot.",
     "priority": 1,
@@ -61,14 +70,14 @@ def readyz(session: Session = Depends(get_session)):
 def metrics(actor: ActorContext = Depends(require_roles("operator", "admin"))):
     return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
-@router.get("/demo")
-def demo(request: Request):
+@router.get("/operations")
+def operations(request: Request):
     return templates.TemplateResponse(
         request,
-        "demo.html",
+        "operations.html",
         {
-            "demo_payload": DEMO_TASK_PAYLOAD,
-            "demo_roles": ["creator", "approver", "operator", "admin"],
+            "default_payload": DEFAULT_TASK_PAYLOAD,
+            "available_roles": ["creator", "approver", "operator", "admin"],
         },
     )
 
@@ -76,13 +85,13 @@ def demo(request: Request):
 def auth_me(actor: ActorContext = Depends(get_current_actor)):
     return serialize_actor(actor)
 
-@router.post("/v1/auth/demo-token")
-def create_demo_token(req: DemoTokenRequest):
+@router.post("/v1/auth/local-token")
+def create_local_token(req: LocalTokenRequest):
     settings = get_settings()
-    if not settings.auth_demo_tokens_enabled:
-        raise HTTPException(status_code=404, detail="demo tokens disabled")
+    if not settings.auth_local_tokens_enabled:
+        raise HTTPException(status_code=404, detail="local dev tokens disabled")
     try:
-        actor = demo_actor_for_role(req.role)
+        actor = local_dev_actor_for_role(req.role)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     token = create_access_token(actor, settings=settings)
@@ -91,6 +100,62 @@ def create_demo_token(req: DemoTokenRequest):
         "token_type": "bearer",
         "expires_in": settings.auth_token_ttl_seconds,
         "actor": serialize_actor(actor),
+    }
+
+
+@router.get("/v1/ops/readiness")
+def operations_readiness(
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    settings = get_settings()
+    checks = {}
+    warnings = []
+    db_ready = True
+    try:
+        session.execute(select(1))
+    except Exception as exc:
+        db_ready = False
+        checks["database_error"] = str(exc)
+    store = get_reliability_store(settings)
+    reliability_status = store.status()
+    artifact_backend = settings.artifact_backend.lower()
+    if settings.app_env.lower() in {"prod", "production"} and settings.auth_local_tokens_enabled:
+        warnings.append("local dev tokens are enabled in production environment")
+    if settings.auth_mode.lower() == "jwks" and not settings.auth_jwks_url:
+        warnings.append("AUTH_JWKS_URL is not configured")
+    checks.update({
+        "database": {"ready": db_ready},
+        "reliability": reliability_status,
+        "kafka": {
+            "configured": bool(settings.kafka_bootstrap_servers),
+            "bootstrap_servers": settings.kafka_bootstrap_servers,
+        },
+        "artifact_backend": {
+            "backend": artifact_backend,
+            "bucket": settings.minio_bucket if artifact_backend == "s3" else None,
+            "base_path": settings.artifact_base_path if artifact_backend == "local" else None,
+        },
+    })
+    status = "ready" if db_ready and reliability_status.get("available", True) and not warnings else "degraded"
+    if not db_ready or reliability_status.get("available") is False:
+        status = "not_ready"
+    return {
+        "status": status,
+        "app": {"name": settings.app_name, "version": settings.app_version, "env": settings.app_env},
+        "auth": {
+            "mode": settings.auth_mode,
+            "local_tokens_enabled": settings.auth_local_tokens_enabled,
+            "issuer": settings.auth_jwt_issuer,
+            "audience": settings.auth_jwt_audience,
+        },
+        "worker": {
+            "service_id": settings.worker_service_id,
+            "task_lock_ttl_seconds": settings.task_lock_ttl_seconds,
+        },
+        "dlq": {"topic": settings.dlq_topic},
+        "checks": checks,
+        "warnings": warnings,
     }
 
 def _correlation_id(request: Request) -> str:
@@ -207,53 +272,87 @@ def replay_dlq_task(
     task = session.get(models.Task, uuid.UUID(task_id))
     if not task or task.tenant_id != actor.tenant_id:
         raise HTTPException(status_code=404, detail="task not found")
-    metadata = task.metadata_ or {}
-    reliability = dict(metadata.get("reliability") or {})
-    dlq = dict(reliability.get("dlq") or {})
-    if task.status != "failed" or not dlq:
+    if not is_replayable_dlq_task(task):
         raise HTTPException(status_code=409, detail="task is not replayable from DLQ")
-
-    replay = dict(reliability.get("replay") or {})
-    replay["count"] = int(replay.get("count") or 0) + 1
-    replay["last_replayed_at"] = datetime.now(timezone.utc).isoformat()
-    replay["last_replayed_by"] = actor.email
-    dlq["status"] = "replayed"
-    reliability["dlq"] = dlq
-    reliability["replay"] = replay
-    task.metadata_ = {**metadata, "reliability": reliability}
-    task.completed_at = None
-    task.started_at = None
-    set_task_status(session, task, "queued")
-    write_audit(
-        session,
-        task.tenant_id,
-        actor.email,
-        "task.dlq_replayed",
-        "task",
-        str(task.id),
-        {
-            "correlation_id": task.correlation_id,
-            "replay": replay,
-            **actor.audit_payload(),
-        },
-    )
+    replay = apply_dlq_replay(session, task, actor, note="DLQ replay")
     session.flush()
-    bus.publish("agent.tasks.queued", str(task.id), {
-        "event_id": str(uuid.uuid4()),
-        "event_type": "task.queued",
-        "task_id": str(task.id),
-        "tenant_id": str(task.tenant_id),
-        "approved_by": actor.email,
-        "note": "DLQ replay",
-        "correlation_id": task.correlation_id,
-        **actor.audit_payload(),
-    })
+    publish_replay_event(bus, task, actor, "DLQ replay")
     session.commit()
     return {
         "task_id": str(task.id),
         "status": task.status,
         "replay": replay,
     }
+
+
+@router.post("/v1/dlq/tasks/bulk-replay")
+def bulk_replay_dlq_tasks(
+    req: DlqBulkReplayRequest,
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    settings = get_settings()
+    bus = get_bus(settings.kafka_bootstrap_servers)
+    replayed = []
+    skipped = []
+    note = req.note or "DLQ bulk replay"
+    for task_id in req.task_ids:
+        task = session.get(models.Task, task_id)
+        if not task or task.tenant_id != actor.tenant_id:
+            skipped.append({"task_id": str(task_id), "reason": "not_found"})
+            continue
+        dlq = (((task.metadata_ or {}).get("reliability") or {}).get("dlq") or {})
+        if dlq.get("status") == "quarantined":
+            skipped.append({"task_id": str(task.id), "reason": "quarantined"})
+            continue
+        if not is_replayable_dlq_task(task):
+            skipped.append({"task_id": str(task.id), "reason": "not_replayable"})
+            continue
+        apply_dlq_replay(session, task, actor, note=note)
+        publish_replay_event(bus, task, actor, note)
+        replayed.append({"task_id": str(task.id), "status": task.status})
+    session.commit()
+    return {"replayed": replayed, "skipped": skipped}
+
+
+@router.post("/v1/dlq/tasks/{task_id}/quarantine")
+def quarantine_dlq_task(
+    task_id: str,
+    req: DlqQuarantineRequest,
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    task = session.get(models.Task, uuid.UUID(task_id))
+    if not task or task.tenant_id != actor.tenant_id:
+        raise HTTPException(status_code=404, detail="task not found")
+    metadata = task.metadata_ or {}
+    reliability = dict(metadata.get("reliability") or {})
+    dlq = dict(reliability.get("dlq") or {})
+    if task.status != "failed" or not dlq:
+        raise HTTPException(status_code=409, detail="task is not quarantineable from DLQ")
+    dlq["status"] = "quarantined"
+    dlq["quarantine"] = {
+        "reason": req.reason,
+        "quarantined_at": datetime.now(timezone.utc).isoformat(),
+        "quarantined_by": actor.email,
+    }
+    reliability["dlq"] = dlq
+    task.metadata_ = {**metadata, "reliability": reliability}
+    write_audit(
+        session,
+        task.tenant_id,
+        actor.email,
+        "task.dlq_quarantined",
+        "task",
+        str(task.id),
+        {
+            "correlation_id": task.correlation_id,
+            "dlq": dlq,
+            **actor.audit_payload(),
+        },
+    )
+    session.commit()
+    return {"task_id": str(task.id), "status": task.status, "dlq": dlq}
 
 @router.get("/v1/tasks")
 def list_tasks(
@@ -299,6 +398,74 @@ def get_task_audit(
     ).scalars().all()
     return [serialize_audit_log(entry) for entry in entries]
 
+
+@router.get("/v1/tasks/{task_id}/replay")
+def get_task_replay(
+    task_id: str,
+    actor: ActorContext = Depends(require_roles("approver", "operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    task_uuid = uuid.UUID(task_id)
+    task = session.get(models.Task, task_uuid)
+    if not task or task.tenant_id != actor.tenant_id:
+        raise HTTPException(status_code=404, detail="task not found")
+    audits = session.execute(
+        select(models.AuditLog)
+        .where(
+            models.AuditLog.entity_type == "task",
+            models.AuditLog.entity_id == str(task_uuid),
+            models.AuditLog.tenant_id == actor.tenant_id,
+        )
+        .order_by(models.AuditLog.created_at.asc())
+    ).scalars().all()
+    evaluations = session.execute(
+        select(models.Evaluation)
+        .where(models.Evaluation.task_id == task_uuid)
+        .order_by(models.Evaluation.created_at.asc())
+    ).scalars().all()
+    timeline = []
+    for entry in audits:
+        timeline.append({
+            "kind": "audit",
+            "created_at": entry.created_at.isoformat(),
+            "action": entry.action,
+            "actor": entry.actor,
+            "payload": entry.payload,
+        })
+    for step in sorted(getattr(task, "steps", []), key=lambda item: item.step_no):
+        timeline.append({
+            "kind": "step",
+            "created_at": step.created_at.isoformat(),
+            "step_no": step.step_no,
+            "action_type": step.action_type,
+            "target": step.target,
+            "status": step.status,
+            "input_data": step.input_data,
+            "output_data": step.output_data,
+            "error_message": step.error_message,
+        })
+    for artifact in sorted(getattr(task, "artifacts", []), key=lambda item: item.created_at):
+        payload = serialize_artifact(artifact)
+        timeline.append({
+            "kind": "artifact",
+            "created_at": artifact.created_at.isoformat(),
+            "artifact": payload,
+        })
+    for evaluation in evaluations:
+        timeline.append({
+            "kind": "evaluation",
+            "created_at": evaluation.created_at.isoformat(),
+            "evaluator_ver": evaluation.evaluator_ver,
+            "score": float(evaluation.score),
+            "verdict": evaluation.verdict,
+            "checks": evaluation.checks,
+        })
+    return {
+        "task_id": str(task.id),
+        "status": task.status,
+        "timeline": timeline,
+    }
+
 @router.get("/v1/artifacts/{artifact_id}/content")
 def get_artifact_content(
     artifact_id: str,
@@ -310,9 +477,18 @@ def get_artifact_content(
         raise HTTPException(status_code=404, detail="artifact not found")
     ensure_artifact_access(artifact, actor.tenant_id)
     settings = get_settings()
-    path = resolve_artifact_file_path(settings.artifact_base_path, artifact.uri)
     metadata = artifact.metadata_ or {}
     media_type = metadata.get("content_type") or metadata.get("media_type") or "application/octet-stream"
+    backend = metadata.get("backend") or getattr(settings, "artifact_backend", "local")
+    if backend == "s3" or artifact.uri.startswith("s3://"):
+        store = build_artifact_store_from_settings(settings)
+        data = store.read_bytes(artifact.uri)
+        return Response(
+            content=data,
+            media_type=media_type,
+            headers={"Content-Disposition": f'inline; filename="{Path(artifact.uri).name}"'},
+        )
+    path = resolve_artifact_file_path(settings.artifact_base_path, artifact.uri)
     response = FileResponse(path, media_type=media_type, filename=path.name)
     response.headers["Content-Disposition"] = f'inline; filename="{path.name}"'
     return response
@@ -404,6 +580,57 @@ def serialize_dlq_task(task) -> dict:
         "replay": reliability.get("replay"),
         "updated_at": task.updated_at.isoformat() if task.updated_at else None,
     }
+
+
+def is_replayable_dlq_task(task) -> bool:
+    reliability = ((task.metadata_ or {}).get("reliability") or {})
+    dlq = reliability.get("dlq") or {}
+    return task.status == "failed" and bool(dlq) and dlq.get("status") != "quarantined"
+
+
+def apply_dlq_replay(session: Session, task, actor: ActorContext, note: str) -> dict:
+    metadata = task.metadata_ or {}
+    reliability = dict(metadata.get("reliability") or {})
+    dlq = dict(reliability.get("dlq") or {})
+    replay = dict(reliability.get("replay") or {})
+    replay["count"] = int(replay.get("count") or 0) + 1
+    replay["last_replayed_at"] = datetime.now(timezone.utc).isoformat()
+    replay["last_replayed_by"] = actor.email
+    replay["note"] = note
+    dlq["status"] = "replayed"
+    reliability["dlq"] = dlq
+    reliability["replay"] = replay
+    task.metadata_ = {**metadata, "reliability": reliability}
+    task.completed_at = None
+    task.started_at = None
+    set_task_status(session, task, "queued")
+    write_audit(
+        session,
+        task.tenant_id,
+        actor.email,
+        "task.dlq_replayed",
+        "task",
+        str(task.id),
+        {
+            "correlation_id": task.correlation_id,
+            "replay": replay,
+            **actor.audit_payload(),
+        },
+    )
+    return replay
+
+
+def publish_replay_event(bus, task, actor: ActorContext, note: str) -> None:
+    bus.publish("agent.tasks.queued", str(task.id), {
+        "event_id": str(uuid.uuid4()),
+        "event_type": "task.queued",
+        "task_id": str(task.id),
+        "tenant_id": str(task.tenant_id),
+        "approved_by": actor.email,
+        "note": note,
+        "correlation_id": task.correlation_id,
+        **actor.audit_payload(),
+    })
 
 def serialize_audit_log(entry) -> dict:
     return {
@@ -538,7 +765,7 @@ def list_skills(
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    configure_logging(settings.app_log_level)
-    app = FastAPI(title=settings.app_name, version="0.6.0")
+    configure_logging(getattr(settings, "app_log_level", "INFO"))
+    app = FastAPI(title=getattr(settings, "app_name", "browser-agent"), version=getattr(settings, "app_version", "1.0.0"))
     app.include_router(router)
     return app
