@@ -74,6 +74,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       RELIABILITY_STORE: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ARTIFACT_BACKEND: s3
       ARTIFACT_BASE_PATH: /data/artifacts
       ALLOWLIST_DOMAINS: example.com,example.org
       MINIO_ENDPOINT: minio:9000
@@ -85,6 +86,8 @@ services:
       TASK_LOCK_TTL_SECONDS: 300
       WORKER_SERVICE_ID: worker-local
       DLQ_TOPIC: agent.tasks.dlq
+      AUTH_MODE: local
+      AUTH_LOCAL_TOKENS_ENABLED: "true"
       BOOTSTRAP_KAFKA_TOPICS: "true"
     ports:
       - "8000:8000"
@@ -104,6 +107,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       RELIABILITY_STORE: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ARTIFACT_BACKEND: s3
       ARTIFACT_BASE_PATH: /data/artifacts
       ALLOWLIST_DOMAINS: example.com,example.org
       MINIO_ENDPOINT: minio:9000
@@ -115,6 +119,8 @@ services:
       TASK_LOCK_TTL_SECONDS: 300
       WORKER_SERVICE_ID: worker-local
       DLQ_TOPIC: agent.tasks.dlq
+      AUTH_MODE: local
+      AUTH_LOCAL_TOKENS_ENABLED: "true"
       BOOTSTRAP_KAFKA_TOPICS: "true"
     volumes:
       - artifacts:/data/artifacts

@@ -100,8 +100,9 @@ class TaskRunner:
         task.started_at = datetime.now(timezone.utc)
         self.session.add(task)
 
+        task_steps = []
         for i, step in enumerate(resolved_plan, start=1):
-            add_step(
+            task_steps.append(add_step(
                 self.session,
                 task=task,
                 step_no=i,
@@ -109,7 +110,7 @@ class TaskRunner:
                 instruction=f"Execute {step['action']}",
                 target=step.get("target") or step.get("url"),
                 input_data=step,
-            )
+            ))
         self.session.flush()
 
         result = self.browser.execute(
@@ -120,6 +121,17 @@ class TaskRunner:
             self.artifact_store,
             self.allowed_domains,
         )
+
+        observations_by_step = {
+            observation.get("step_no"): observation
+            for observation in result.observations
+        }
+        for step in task_steps:
+            observation = observations_by_step.get(step.step_no, {})
+            step.output_data = observation
+            step.status = "failed" if observation.get("error") else "completed"
+            step.completed_at = datetime.now(timezone.utc)
+            self.session.add(step)
 
         for artifact in result.artifacts:
             artifact_metadata = _artifact_metadata(artifact)
