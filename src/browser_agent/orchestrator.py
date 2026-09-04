@@ -116,6 +116,7 @@ class Orchestrator:
             "tenant_id": str(tenant_id),
             "created_by": str(created_by) if created_by else None,
             "correlation_id": correlation_id,
+            **(actor_payload or {}),
         })
         return task
 
