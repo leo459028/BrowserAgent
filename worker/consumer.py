@@ -33,6 +33,7 @@ def main():
 
         event = json.loads(msg.value().decode("utf-8"))
         task_id = uuid.UUID(event["task_id"])
+        trace_context = event.get("trace_context") or {}
 
         session: Session = get_session_factory()()
         try:
@@ -47,7 +48,45 @@ def main():
                 consumer.commit(msg)
                 continue
 
+            trace_id = trace_context.get("trace_id") or (task.correlation_id or "").replace("-", "") or "0" * 32
+            parent_span_id = trace_context.get("span_id")
+            from browser_agent.tracing import generate_span_id, get_trace_buffer, Span
+            worker_span_id = generate_span_id()
+            updated_trace_context = {
+                "trace_id": trace_id,
+                "span_id": worker_span_id,
+                "parent_span_id": parent_span_id,
+            }
+            task.metadata_ = {**(task.metadata_ or {}), "trace_context": updated_trace_context}
+            session.add(task)
+            session.commit()
+
+            logger.info(
+                "worker received task",
+                extra={
+                    "task_id": str(task_id),
+                    "correlation_id": event.get("correlation_id"),
+                    "trace_id": trace_id,
+                    "span_id": worker_span_id,
+                    "parent_span_id": parent_span_id,
+                    "event_name": "worker.task.received",
+                    "service_name": "browser-agent-worker",
+                    "service_version": getattr(settings, "app_version", "1.1.0"),
+                    "environment": getattr(settings, "app_env", "local"),
+                },
+            )
+            worker_started = time.monotonic()
             _run_task_with_retries(task_id, max_attempts=settings.max_task_retries)
+            get_trace_buffer().record(Span(
+                name="worker.process_task",
+                trace_id=trace_id,
+                span_id=worker_span_id,
+                parent_span_id=parent_span_id,
+                service="browser-agent-worker",
+                duration_ms=round((time.monotonic() - worker_started) * 1000, 2),
+                status="ok",
+                attributes={"task_id": str(task_id)},
+            ))
             consumer.commit(msg)
         except Exception as exc:
             session.rollback()

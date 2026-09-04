@@ -1,6 +1,6 @@
 # BrowserAgent
 
-BrowserAgent 是 enterprise browser agent platform 的 **V1.0 MVP：Operations Center**。目前版本把瀏覽器自動化、人工審核、執行紀錄、artifact 保存與失敗任務處理整合在一起，讓團隊可以用比較接近營運後台的方式管理 browser agent 工作流。
+BrowserAgent 是 enterprise browser agent platform 的 **V1.1：Compose Production Readiness + OTEL-ready Schema**。目前版本把瀏覽器自動化、人工審核、執行紀錄、artifact 保存、失敗任務處理與 production readiness 檢查整合在一起，讓團隊可以用比較接近營運後台的方式管理 browser agent 工作流。
 
 ## 一般版
 
@@ -8,7 +8,7 @@ BrowserAgent 是 enterprise browser agent platform 的 **V1.0 MVP：Operations C
 
 BrowserAgent 可以把「需要人打開網站、登入系統、查資料、截圖、留下證據」這類工作，整理成可以建立、審核、執行、追蹤與回放的任務流程。
 
-它不是單純的瀏覽器腳本，也不是只在工程師電腦上跑一次的測試工具。V1.0 MVP 的重點是 **Operations Center**：讓 operator 可以在同一個頁面查看系統是否準備好、任務目前跑到哪裡、產生了哪些 artifacts、誰核准過、哪一步失敗、失敗任務能不能 replay，必要時也可以 quarantine 問題任務。
+它不是單純的瀏覽器腳本，也不是只在工程師電腦上跑一次的測試工具。V1.1 的重點是 **Operations Center + Compose 生產化準備**：讓 operator 可以在同一個頁面查看系統是否準備好、production-like 設定是否安全、任務目前跑到哪裡、產生了哪些 artifacts、誰核准過、哪一步失敗、失敗任務能不能 replay，必要時也可以 quarantine 問題任務。
 
 簡單說，它適合拿來做「可被人管理的 browser agent」。瀏覽器負責執行重複性網頁操作，人負責審核高風險任務、看結果、追蹤紀錄與處理例外。
 
@@ -28,7 +28,7 @@ BrowserAgent 的設計方向是把這些流程變成可管理的 task lifecycle�
 
 ### Operations Center 可以看到什麼？
 
-V1.0 的主要入口是：
+V1.1 的主要入口是：
 
 ```text
 http://localhost:8000/operations
@@ -39,6 +39,8 @@ Operations Center 目前可以用來：
 - 建立 browser task，並查看任務狀態、風險等級、correlation id 與執行結果。
 - 對需要人工確認的任務做 approve，再交給 worker 執行。
 - 查看 Operations Readiness，確認 DB、Kafka、artifact backend、worker identity、DLQ topic 與 auth mode 是否正常。
+- 查看 Production Readiness，確認 production Compose 設定是否關閉 local token、使用 JWKS/OIDC、Redis reliability、Kafka 與 S3 artifact backend。
+- 查看 Observability，確認 OTEL-ready 設定、log correlation schema、`X-Correlation-ID` 與 `traceparent` 預留狀態。
 - 查看 artifacts，例如 screenshot 或 HTML，並確認它們是存在 local filesystem 還是 MinIO/S3 backend。
 - 查看 audit logs，知道任務是誰建立、誰核准、誰 replay 或 quarantine。
 - 查看 metrics 與 reliability 狀態，協助判斷系統目前是否健康。
@@ -65,25 +67,26 @@ Operations Center 目前可以用來：
 
 ### 目前不適用的情境
 
-BrowserAgent V1.0 MVP 還不是可以放心接管所有網頁操作的完整平台。以下情境目前不適合使用，或必須加入額外的人為審核與安全控管：
+BrowserAgent 目前還不是可以放心接管所有網頁操作的完整平台。以下情境目前不適合使用，或必須加入額外的人為審核與安全控管：
 
 - 不適合直接執行金流轉帳、證券交易、下單採購、放款核准、保險核保、醫療診斷、法律判斷等高風險決策。
 - 不適合繞過網站權限、CAPTCHA、反爬蟲機制、付費牆、使用者同意或服務條款。
 - 不適合處理未授權的個資、病歷、財務資料、客戶機密、商業秘密或大量敏感資料。
 - 不適合拿來做大規模外部網站抓取、競品監控或任何可能造成對方服務負載的行為，除非已取得明確授權。
 - 不適合當成完整 RPA 平台；它目前聚焦在 browser agent task、審核、紀錄、artifact 與營運回放。
-- 不適合當成完整企業登入系統；V1.0 支援 local dev token 與可選 JWKS token 驗證，但不包含完整 IdP login flow。
+- 不適合當成完整企業登入系統；V1.1 支援 local dev token、JWKS token 驗證與 OIDC discovery，但不包含完整 IdP login flow。
 - 不適合當成正式 secrets vault、完整資安控管平台、Kubernetes/Helm 部署平台或瀏覽器影片錄製平台。
 
-### V1.0 MVP 目前限制
+### V1.1 目前限制
 
-- 目前主要驗證環境是本機與 Docker Compose，還不是完整雲端 production deployment。
-- `/operations` 是 V1.0 的營運入口，但仍是 MVP；它可以查詢與操作核心流程，不等於完整企業級後台。
-- local dev token 只適合本機開發與測試；正式環境應使用 `AUTH_MODE=jwks` 並串接企業既有身分系統。
+- 目前主要驗證環境是本機、Docker Compose 與 production-like Compose config，還不是完整雲端 production deployment。
+- `/operations` 是 V1.1 的營運入口；它可以查詢與操作核心流程，不等於完整企業級後台。
+- local dev token 只適合本機開發與測試；production-like 設定應使用 `AUTH_MODE=jwks`，並搭配 `AUTH_JWKS_URL` 或 `AUTH_OIDC_ISSUER_URL`。
 - Replay-lite 是由 audit、steps、artifacts、evaluation 組成的 timeline，不是完整瀏覽器錄影，也不是 DOM stream。
 - Artifact backend 支援 local 與 MinIO/S3；retention、redaction 目前主要以 metadata 表達，尚未等同完整資料生命週期治理。
 - Planner 目前偏 MVP 驗證與 metadata 補強，不是完整外部 LLM agent planner。
 - SkillHub 目前聚焦 resolver metadata，不代表已經能安全執行任意第三方 skill。
+- V1.1 是 OTEL-ready schema，不是完整 OpenTelemetry distributed tracing；K8s/Helm 與 OTLP exporter 留待後續版本。
 - 高風險操作仍應保留人為審核、權限分層、測試環境驗證與公司內部安全流程。
 
 ### 快速啟動
@@ -110,12 +113,16 @@ curl.exe http://localhost:8000/readyz
 
 ### 主要能力
 
-- FastAPI control plane：Auth、task、approval、artifact、SkillHub、readiness、DLQ、replay APIs。
-- Auth/RBAC：local HS256 dev token 與 optional JWKS RS256 verifier。
+- FastAPI control plane：Auth、task、approval、artifact、SkillHub、readiness、alerts、traces、DLQ、visual replay APIs。
+- Auth/RBAC：local HS256 dev token、JWKS RS256 verifier 與 OIDC discovery 取得 `jwks_uri`。
 - Roles：`creator`、`approver`、`operator`、`admin`。
+- Distributed Tracing：W3C `traceparent` Context 傳播、Span 生命週期管理、環形記憶體 TraceBuffer、跨進程 Trace Inspector。
+- Production Alerting Center：7 大維運規則即時評估、外部 Webhook（Slack/Discord）非阻塞非同步轉發、手動測試派發通道與審計日誌。
+- Visual Step Replay：步驟分頁導航條、點選即時預覽截圖縮圖、DOM 摘要與毫秒級步驟執行耗時分析。
 - Reliability：Redis/memory rate limit、idempotency、worker lock、DLQ metadata。
 - Artifacts：local filesystem 或 MinIO/S3 backend，包含 SHA-256、content type、size、retention、redaction metadata。
-- Operations：`/operations` 可操作 task lifecycle、readiness、artifact access、bulk DLQ、Replay-lite timeline。
+- Operations：`/operations` 可操作 task lifecycle、Production Alerting、Trace Inspector、Visual Step Replay、Production Readiness、Observability、artifact access、bulk DLQ。
+- Observability：HTTP request metrics、auth failure metrics、production readiness gauge、OTEL-ready log correlation schema。
 - Worker：Kafka consumer、Playwright runner、service identity、retry/DLQ。
 
 ### 取得 local dev token
@@ -161,6 +168,12 @@ Docker 可用時：
 docker compose exec -T api pytest -q
 ```
 
+Production-like Compose config 可審查：
+
+```powershell
+docker compose --env-file .env.production.example -f docker-compose.prod.yml config
+```
+
 實際測試結果請看 [DOCS/TEST_REPORT.md](DOCS/TEST_REPORT.md)。
 
 ### 文件
@@ -168,9 +181,14 @@ docker compose exec -T api pytest -q
 - [DOCS/OVERVIEW.md](DOCS/OVERVIEW.md)
 - [DOCS/API.md](DOCS/API.md)
 - [DOCS/ARCHITECTURE.md](DOCS/ARCHITECTURE.md)
-  - 架構圖資產：`DOCS/assets/browseragent-architecture.png`
+  - 架構圖資產：繁中版 `DOCS/assets/browseragent-architecture-v1.1ch.png`、英文版 `DOCS/assets/browseragent-architecture-v1.1en.png`
 - [DOCS/CONFIGURATION.md](DOCS/CONFIGURATION.md)
 - [DOCS/DATA_MODEL.md](DOCS/DATA_MODEL.md)
+- [DOCS/OBSERVABILITY.md](DOCS/OBSERVABILITY.md)
+- [DOCS/ROADMAP.md](DOCS/ROADMAP.md)
 - [DOCS/RUNBOOK.md](DOCS/RUNBOOK.md)
 - [DOCS/SECURITY_AND_POLICY.md](DOCS/SECURITY_AND_POLICY.md)
 - [DOCS/USE_CASES.md](DOCS/USE_CASES.md)
+- [DOCS/DEVELOPMENT.md](DOCS/DEVELOPMENT.md)
+- [DOCS/manual_test.md](DOCS/manual_test.md)
+- [DOCS/TEST_REPORT.md](DOCS/TEST_REPORT.md)

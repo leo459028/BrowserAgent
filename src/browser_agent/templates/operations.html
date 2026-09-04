@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Browser Agent v1.0 Operations Center</title>
+  <title>Browser Agent v1.1 Operations Center</title>
   <style>
     :root {
       color-scheme: light;
@@ -57,7 +57,7 @@
       align-items: center;
       flex-wrap: wrap;
     }
-    button, select {
+    button, select, input {
       min-height: 38px;
       border-radius: 6px;
       font: inherit;
@@ -82,7 +82,7 @@
       cursor: not-allowed;
       opacity: 0.58;
     }
-    select {
+    select, input {
       border: 1px solid var(--line);
       background: white;
       color: var(--text);
@@ -197,8 +197,11 @@
   <main>
     <header>
       <div>
-        <h1>Browser Agent v1.0 Operations Center</h1>
-        <div class="muted">Operations center for readiness, Reliability / DLQ, Identity/RBAC, production approval, Planner validation, SkillHub resolution, metrics, audit, replay, and artifact governance.</div>
+        <div style="display:flex; align-items:center;">
+          <h1 style="margin:0;">Browser Agent v1.1 Operations Center</h1>
+          <span id="system-alert-badge" class="status pass" style="margin-left: 12px; font-size: 13px;">All Systems Normal</span>
+        </div>
+        <div class="muted">Operations center for production readiness, Observability, OIDC/JWKS, Reliability / DLQ, Identity/RBAC, metrics, audit, replay, and artifact governance.</div>
       </div>
       <div class="toolbar">
         <button id="refresh" class="secondary">Refresh</button>
@@ -216,6 +219,50 @@
             <div class="label">Auth</div><div id="ops-auth" class="value">-</div>
             <div class="label">Artifact Backend</div><div id="ops-artifact-backend" class="value">-</div>
             <div class="label">Warnings</div><div id="ops-warnings" class="value">-</div>
+          </div>
+        </section>
+
+        <section>
+          <h2>Production Readiness</h2>
+          <div class="kv">
+            <div class="label">Status</div><div><span id="production-readiness" class="status">checking</span></div>
+            <div class="label">Failures</div><div id="production-failures" class="value">-</div>
+            <div class="label">Warnings</div><div id="production-warnings" class="value">-</div>
+            <div class="label">Checks</div><div id="production-checks" class="value">-</div>
+          </div>
+        </section>
+
+        <section id="alerting-section">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h2 style="margin:0;">Production Alerting Center</h2>
+            <div style="display:flex; gap:6px;">
+              <button id="refresh-alerts" class="secondary" style="min-height:30px; font-size:12px; padding:0 8px;">Refresh</button>
+              <button id="test-dispatch-alert" class="secondary" style="min-height:30px; font-size:12px; padding:0 8px;">Test Dispatch</button>
+            </div>
+          </div>
+          <div class="kv" style="margin-bottom:8px;">
+            <div class="label">Webhook</div><div id="alert-webhook-status" class="value">checking...</div>
+            <div class="label">Overall</div><div><span id="alert-overall-status" class="status">checking</span></div>
+          </div>
+          <div id="alerts-list" class="muted">Loading alerting rules...</div>
+          <div id="alert-dispatch-result" class="muted" style="margin-top:8px; font-size:12px;"></div>
+        </section>
+
+        <section>
+          <h2>Observability</h2>
+          <div class="kv">
+            <div class="label">OTEL-ready</div><div><span id="otel-ready" class="status">checking</span></div>
+            <div class="label">Exporter</div><div id="otel-exporter" class="value">-</div>
+            <div class="label">Propagators</div><div id="otel-propagators" class="value">-</div>
+            <div class="label">Log schema</div><div id="log-schema" class="value">-</div>
+          </div>
+          <div style="margin-top:12px; padding-top:10px; border-top:1px dashed var(--line);">
+            <div style="font-weight:600; font-size:13px; margin-bottom:6px;">Trace Inspector</div>
+            <div style="display:flex; gap:6px; margin-bottom:8px;">
+              <input id="trace-lookup-input" placeholder="Enter Trace ID..." style="min-height:32px; min-width:180px; font-size:12px; padding:0 8px;">
+              <button id="trace-lookup-btn" class="secondary" style="min-height:32px; font-size:12px; padding:0 10px;">Lookup</button>
+            </div>
+            <div id="trace-lookup-result" class="muted" style="font-size:12px;"></div>
           </div>
         </section>
 
@@ -244,6 +291,11 @@
           <div class="button-row">
             <select id="active-role"></select>
             <button id="forbidden-create" class="secondary">Try operator create</button>
+          </div>
+          <div class="button-row" style="margin-top:10px">
+            <input id="external-token" type="password" placeholder="External bearer token">
+            <button id="use-external-token" class="secondary">Use token</button>
+            <button id="clear-external-token" class="secondary">Clear token</button>
           </div>
           <div class="kv" style="margin-top:12px">
             <div class="label">Actor</div><div id="actor-email" class="value">-</div>
@@ -337,9 +389,39 @@
           <pre id="artifact-metadata">{}</pre>
         </section>
 
-        <section>
-          <h2>Replay Timeline</h2>
-          <div id="replay-timeline" class="muted">Select a task to inspect replay timeline.</div>
+        <section id="visual-replay-section">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h2 style="margin:0;">Visual Step Replay & Replay Timeline</h2>
+            <span id="replay-trace-id" class="muted" style="font-size:12px; font-family:monospace;"></span>
+          </div>
+          <div id="step-tabs-container" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;">
+            <span class="muted" style="font-size:13px;">Select a task to inspect visual replay.</span>
+          </div>
+          <div id="step-viewer-card" style="display:none; border:1px solid var(--line); border-radius:6px; padding:12px; background:var(--panel-soft); margin-bottom:12px;">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+              <div>
+                <div style="font-weight:700; margin-bottom:6px;" id="step-viewer-title">Step Details</div>
+                <div class="kv" style="font-size:13px;">
+                  <div class="label">Action</div><div id="step-viewer-action" class="value">-</div>
+                  <div class="label">Target</div><div id="step-viewer-target" class="value" style="word-break:break-all;">-</div>
+                  <div class="label">Status</div><div><span id="step-viewer-status" class="status">-</span></div>
+                  <div class="label">Duration</div><div id="step-viewer-duration" class="value">-</div>
+                  <div class="label">Span ID</div><div id="step-viewer-span" class="value" style="font-family:monospace;">-</div>
+                  <div class="label">DOM Summary</div><div id="step-viewer-dom" class="value" style="font-size:12px;">-</div>
+                </div>
+              </div>
+              <div>
+                <div style="font-weight:700; margin-bottom:6px;">Screenshot Preview</div>
+                <div id="step-viewer-screenshot" style="min-height:160px; display:flex; align-items:center; justify-content:center; background:#fff; border:1px solid var(--line); border-radius:4px; overflow:hidden;">
+                  <span class="muted" style="font-size:12px;">No screenshot for this step</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <details>
+            <summary style="cursor:pointer; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:6px;">Raw Timeline Events</summary>
+            <div id="replay-timeline" class="muted">Select a task to inspect replay timeline.</div>
+          </details>
         </section>
 
         <section>
@@ -443,6 +525,7 @@
     let currentArtifacts = [];
     let pollTimer = null;
     let activeRole = "creator";
+    let externalBearerToken = "";
     const localTokens = {};
     const objectUrls = new Map();
 
@@ -478,6 +561,9 @@
     }
 
     async function authHeaders(role = activeRole, headers = {}) {
+      if (externalBearerToken) {
+        return {...headers, "Authorization": `Bearer ${externalBearerToken}`};
+      }
       const token = await ensureToken(role);
       return {...headers, "Authorization": `Bearer ${token.access_token}`};
     }
@@ -556,8 +642,26 @@
         const backend = info.checks?.artifact_backend || {};
         $("ops-artifact-backend").textContent = backend.backend === "s3" ? `s3 · ${backend.bucket}` : `local · ${backend.base_path || "-"}`;
         $("ops-warnings").textContent = (info.warnings || []).join("; ") || "none";
+
+        const production = info.production || {};
+        setStatus("production-readiness", production.status || "unknown");
+        $("production-failures").textContent = (production.failures || []).join(", ") || "none";
+        $("production-warnings").textContent = (production.warnings || []).join(", ") || "none";
+        $("production-checks").textContent = Object.entries(production.checks || {})
+          .map(([name, check]) => `${name}:${check.status}`)
+          .join(", ") || "-";
+
+        const observability = info.observability || {};
+        setStatus("otel-ready", observability.otel_ready ? "ready" : "warn");
+        $("otel-exporter").textContent = observability.otel_enabled
+          ? `enabled · endpoint ${observability.otel_exporter_otlp_endpoint_configured ? "configured" : "missing"}`
+          : "disabled; schema reserved";
+        $("otel-propagators").textContent = observability.otel_propagators || "-";
+        $("log-schema").textContent = (observability.log_schema_fields || []).join(", ");
       } catch (error) {
         setStatus("ops-readiness", "error");
+        setStatus("production-readiness", "error");
+        setStatus("otel-ready", "error");
         $("ops-warnings").textContent = error.message;
       }
     }
@@ -689,6 +793,7 @@
       if (!currentTaskId) return;
       try {
         const replay = await getJson(`/v1/tasks/${currentTaskId}/replay`, {}, "operator");
+        renderVisualReplay(replay);
         renderReplay(replay.timeline || []);
       } catch (error) {
         $("replay-timeline").innerHTML = `<span class="error-text">${escapeHtml(error.message)}</span>`;
@@ -696,7 +801,20 @@
     }
 
     async function refreshAll() {
-      await Promise.all([checkRuntime(), refreshReadiness(), refreshMetrics(), refreshTasks(), refreshReliability(), refreshDlq()]);
+      const btn = $("refresh");
+      if (btn) btn.textContent = "Refreshing...";
+      try {
+        await Promise.all([checkRuntime(), refreshReadiness(), refreshMetrics(), refreshTasks(), refreshReliability(), refreshDlq(), refreshAlerts()]);
+        if (btn) {
+          btn.textContent = "Refreshed ✓";
+          setTimeout(() => { btn.textContent = "Refresh"; }, 1000);
+        }
+      } catch (err) {
+        if (btn) {
+          btn.textContent = "Error";
+          setTimeout(() => { btn.textContent = "Refresh"; }, 1500);
+        }
+      }
     }
 
     function renderTask(task) {
@@ -708,7 +826,9 @@
       $("final-url").textContent = task.metadata?.browser_result?.final_url || "-";
       $("score").textContent = task.metadata?.evaluation?.score ?? "-";
       $("evaluation").textContent = JSON.stringify(task.metadata?.evaluation || {}, null, 2);
-      $("approve").disabled = task.status !== "pending_approval";
+      const isPending = task.status === "pending_approval";
+      $("approve").disabled = !isPending;
+      $("approve").title = isPending ? "Click to approve this task" : `Cannot approve: task is already ${task.status}`;
       renderStatusFlow(task.status);
       renderPlanner(task);
       renderSteps(task.steps || []);
@@ -740,7 +860,11 @@
           policy_tags: ["browser", "artifact"],
         },
       ];
-      $("register-skills").disabled = true;
+      const btn = $("register-skills");
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Registering...";
+      }
       try {
         for (const skill of skills) {
           await getJson("/v1/skills", {
@@ -750,10 +874,18 @@
           }, "admin");
         }
         $("scenario-help").textContent = "Built-in SkillHub skills registered. Create or rerun the SkillHub resolved task.";
+        if (btn) {
+          btn.textContent = "Registered ✓";
+          setTimeout(() => { btn.textContent = "Register built-in skills"; }, 1500);
+        }
       } catch (error) {
         $("scenario-help").textContent = error.message;
+        if (btn) {
+          btn.textContent = "Failed";
+          setTimeout(() => { btn.textContent = "Register built-in skills"; }, 1500);
+        }
       } finally {
-        $("register-skills").disabled = false;
+        if (btn) btn.disabled = false;
       }
     }
 
@@ -875,6 +1007,74 @@
           <td><pre>${escapeHtml(JSON.stringify(entry.payload || {}, null, 2))}</pre></td>
         </tr>
       `).join("")}</tbody></table>`;
+    }
+
+    let currentStepsVisual = [];
+    function renderVisualReplay(replay) {
+      const traceId = replay.trace_id || "-";
+      $("replay-trace-id").textContent = `Trace: ${traceId}`;
+      const steps = replay.steps_visual || [];
+      currentStepsVisual = steps;
+      const container = $("step-tabs-container");
+      if (!steps.length) {
+        container.innerHTML = '<span class="muted" style="font-size:13px;">No execution steps recorded.</span>';
+        $("step-viewer-card").style.display = "none";
+        return;
+      }
+      container.innerHTML = steps.map((step, idx) => {
+        const statusClass = step.status === "completed" ? "pass" : (step.status === "failed" ? "error" : "warn");
+        const statusIcon = step.status === "completed" ? "✓" : (step.status === "failed" ? "✗" : "•");
+        return `<button class="step-tab secondary" data-step-idx="${idx}" style="min-height:30px; padding:2px 10px; font-size:12px; cursor:pointer;">
+          Step ${step.step_no}: ${escapeHtml(step.action_type)} <span class="status ${statusClass}" style="margin-left:4px; font-size:10px; min-height:18px; padding:1px 5px;">${statusIcon}</span>
+        </button>`;
+      }).join("");
+
+      container.querySelectorAll("button[data-step-idx]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          container.querySelectorAll("button[data-step-idx]").forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          showStepDetail(parseInt(btn.dataset.stepIdx, 10));
+        });
+      });
+
+      if (steps.length > 0) {
+        const firstBtn = container.querySelector('button[data-step-idx="0"]');
+        if (firstBtn) firstBtn.classList.add("active");
+        showStepDetail(0);
+      }
+    }
+
+    async function showStepDetail(idx) {
+      const step = currentStepsVisual[idx];
+      if (!step) return;
+      $("step-viewer-card").style.display = "block";
+      $("step-viewer-title").textContent = `Step ${step.step_no} Details (${step.action_type})`;
+      $("step-viewer-action").textContent = step.action_type;
+      $("step-viewer-target").textContent = step.target || "-";
+      setStatus("step-viewer-status", step.status);
+      $("step-viewer-duration").textContent = `${step.duration_ms || 0} ms`;
+      $("step-viewer-span").textContent = step.span_id || "-";
+      $("step-viewer-dom").textContent = step.dom_summary || "-";
+
+      const previewDiv = $("step-viewer-screenshot");
+      if (step.screenshot_url) {
+        try {
+          const res = await fetch(step.screenshot_url, {
+            headers: await authHeaders("operator")
+          });
+          if (res.ok) {
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            previewDiv.innerHTML = `<img src="${blobUrl}" alt="Step screenshot" style="max-width:100%; max-height:220px; object-fit:contain; cursor:pointer; border-radius:4px; border:1px solid var(--line);" onclick="window.open('${blobUrl}', '_blank')" title="Click to view full image">`;
+          } else {
+            previewDiv.innerHTML = '<span class="muted" style="font-size:12px;">Screenshot access error</span>';
+          }
+        } catch (e) {
+          previewDiv.innerHTML = '<span class="muted" style="font-size:12px;">Screenshot load failed</span>';
+        }
+      } else {
+        previewDiv.innerHTML = '<span class="muted" style="font-size:12px;">No screenshot captured for this step</span>';
+      }
     }
 
     function renderReplay(entries) {
@@ -1035,6 +1235,78 @@
       }
     }
 
+    async function refreshAlerts() {
+      try {
+        const data = await getJson("/v1/ops/alerts", {}, "operator");
+        setStatus("alert-overall-status", data.status === "healthy" ? "ready" : (data.status === "critical" ? "failed" : "warn"));
+        $("alert-webhook-status").textContent = data.webhook_configured ? "Configured (Active)" : "Disabled (No URL set)";
+
+        const badge = $("system-alert-badge");
+        if (badge) {
+          if (data.status === "healthy") {
+            badge.className = "status pass";
+            badge.textContent = "All Systems Normal";
+          } else if (data.status === "critical") {
+            badge.className = "status failed";
+            badge.textContent = `CRITICAL ALERTS (${data.active_alerts_count})`;
+          } else {
+            badge.className = "status warn";
+            badge.textContent = `WARNINGS (${data.active_alerts_count})`;
+          }
+        }
+
+        const rulesHtml = (data.rules || []).map((r) => {
+          const lvlClass = r.level === "ok" ? "pass" : (r.level === "critical" ? "failed" : "warn");
+          return `<div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--line); font-size:12px;">
+            <div><strong>${escapeHtml(r.name)}</strong>: <span class="muted">${escapeHtml(r.message || "")}</span></div>
+            <span class="status ${lvlClass}" style="min-height:20px; font-size:11px; padding:1px 6px;">${r.level}</span>
+          </div>`;
+        }).join("");
+        $("alerts-list").innerHTML = rulesHtml || '<span class="muted">No alerting rules evaluated.</span>';
+      } catch (err) {
+        $("alerts-list").innerHTML = `<span class="error-text">${escapeHtml(err.message)}</span>`;
+      }
+    }
+
+    async function testDispatchAlert() {
+      const note = prompt("Enter simulation alert note:", "Smoke test dispatch from Operations Center");
+      if (note === null) return;
+      try {
+        const res = await getJson("/v1/ops/alerts/test-dispatch", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({rule_id: "dlq_threshold", note: note, level: "warning"}),
+        }, "operator");
+        $("alert-dispatch-result").innerHTML = `<span class="status pass" style="min-height:20px; font-size:11px;">Dispatched</span> Webhook notified: ${res.webhook_dispatched ? "Yes" : "No (Disabled)"} · Dispatched by ${escapeHtml(res.dispatched_by)}`;
+        await refreshAlerts();
+      } catch (err) {
+        $("alert-dispatch-result").innerHTML = `<span class="error-text">${escapeHtml(err.message)}</span>`;
+      }
+    }
+
+    async function lookupTrace() {
+      const traceId = $("trace-lookup-input").value.trim();
+      if (!traceId) {
+        $("trace-lookup-result").innerHTML = '<span class="error-text">Please enter a Trace ID</span>';
+        return;
+      }
+      try {
+        const data = await getJson(`/v1/ops/traces/${traceId}`, {}, "operator");
+        if (!data.spans || !data.spans.length) {
+          $("trace-lookup-result").innerHTML = `<span class="muted">No spans found in buffer for trace ${escapeHtml(traceId)}</span>`;
+          return;
+        }
+        const tree = data.spans.map((s) => {
+          return `<div style="padding:3px 0; font-family:monospace; font-size:11px;">
+            ${s.parent_span_id ? "↳ " : "• "}<strong>${escapeHtml(s.name)}</strong> [${s.service}] · ${s.duration_ms ?? 0}ms · <span class="status ${s.status === 'ok' ? 'pass' : 'failed'}" style="min-height:16px; font-size:9px; padding:0 4px;">${s.status}</span>
+          </div>`;
+        }).join("");
+        $("trace-lookup-result").innerHTML = `<div style="max-height:180px; overflow-y:auto; border:1px solid var(--line); border-radius:4px; padding:6px; background:#fff;">${tree}</div>`;
+      } catch (err) {
+        $("trace-lookup-result").innerHTML = `<span class="error-text">${escapeHtml(err.message)}</span>`;
+      }
+    }
+
     function escapeHtml(value) {
       return String(value)
         .replaceAll("&", "&amp;")
@@ -1062,6 +1334,17 @@
       activeRole = $("active-role").value;
       await refreshIdentity();
     });
+    $("use-external-token").addEventListener("click", async () => {
+      externalBearerToken = $("external-token").value.trim();
+      await refreshIdentity();
+      await refreshAll();
+    });
+    $("clear-external-token").addEventListener("click", async () => {
+      externalBearerToken = "";
+      $("external-token").value = "";
+      await refreshIdentity();
+      await refreshAll();
+    });
     $("forbidden-create").addEventListener("click", tryForbiddenCreate);
     $("idempotency-smoke").addEventListener("click", runIdempotencySmoke);
     $("refresh-dlq").addEventListener("click", refreshDlq);
@@ -1072,6 +1355,9 @@
     $("refresh").addEventListener("click", refreshAll);
     $("artifact-select").addEventListener("change", () => renderArtifactQuery($("artifact-select").value));
     $("artifact-check").addEventListener("click", checkArtifactAccess);
+    $("refresh-alerts").addEventListener("click", refreshAlerts);
+    $("test-dispatch-alert").addEventListener("click", testDispatchAlert);
+    $("trace-lookup-btn").addEventListener("click", lookupTrace);
     renderScenario();
     renderStatusFlow("idle");
     refreshIdentity();

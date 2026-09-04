@@ -8,7 +8,7 @@ python -m compileall src tests worker alembic
 git diff --check
 ```
 
-目前主要測試：
+目前主要測試（共 12 個測試模組，74 個測試全部通過）：
 
 - `tests/test_v01_operations.py`：Operations Center rendering、artifact serialization、task list API、audit API。
 - `tests/test_v05_auth_rbac.py`：local dev token、RBAC、approval actor、artifact tenant access。
@@ -18,6 +18,10 @@ git diff --check
 - `tests/test_v10_artifacts_s3.py`：S3 artifact store 與 content endpoint。
 - `tests/test_v10_dlq_ops.py`：bulk replay 與 quarantine。
 - `tests/test_v10_replay.py`：Replay-lite timeline。
+- `tests/test_v11_tracing.py`：W3C traceparent、Tracer / Span 生命週期、記憶體環形 TraceBuffer 與端到端追蹤端點。
+- `tests/test_v11_alerts_webhook.py`：7 大維運告警規則即時評估、外部 Webhook 非阻塞轉發與 Admin 測試派發。
+- `tests/test_v11_visual_replay.py`：步驟分頁資料結構、DOM 摘要、截圖關聯、Trace ID 與向後相容 Replay API。
+- `tests/test_v11_operations_ui.py`：V1.1 Operations UI 渲染（Alert Badge、Alerting Center、Trace Inspector、Visual Step Replay 分頁條）。
 
 ## Docker
 

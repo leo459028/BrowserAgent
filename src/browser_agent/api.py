@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import time
 import uuid
 from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, Body, Depends, FastAPI, Header, HTTPException
 from fastapi import Request
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -19,6 +21,7 @@ from .db import get_session_factory
 from . import models
 from .auth import ActorContext, create_access_token, local_dev_actor_for_role, get_current_actor, require_roles
 from .schemas import (
+    AlertTestDispatchRequest,
     DlqBulkReplayRequest,
     DlqQuarantineRequest,
     LocalTokenRequest,
@@ -34,9 +37,19 @@ from .audit import write_audit
 from .reliability import get_reliability_store
 from .services.tasks import set_task_status
 from .services.artifacts import build_artifact_store_from_settings
+from .metrics import HTTP_DURATION, HTTP_REQUESTS, PRODUCTION_READINESS
+from .request_context import (
+    LOG_SCHEMA_FIELDS,
+    build_request_context,
+    get_request_context,
+    request_context_payload,
+    reset_request_context,
+    set_request_context,
+)
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+logger = logging.getLogger(__name__)
 
 def get_session():
     session = get_session_factory()()
@@ -81,6 +94,14 @@ def operations(request: Request):
         },
     )
 
+@router.get("/", include_in_schema=False)
+def root_redirect():
+    return RedirectResponse(url="/operations", status_code=307)
+
+@router.get("/operation", include_in_schema=False)
+def operation_redirect():
+    return RedirectResponse(url="/operations", status_code=307)
+
 @router.get("/v1/auth/me")
 def auth_me(actor: ActorContext = Depends(get_current_actor)):
     return serialize_actor(actor)
@@ -120,10 +141,8 @@ def operations_readiness(
     store = get_reliability_store(settings)
     reliability_status = store.status()
     artifact_backend = settings.artifact_backend.lower()
-    if settings.app_env.lower() in {"prod", "production"} and settings.auth_local_tokens_enabled:
-        warnings.append("local dev tokens are enabled in production environment")
-    if settings.auth_mode.lower() == "jwks" and not settings.auth_jwks_url:
-        warnings.append("AUTH_JWKS_URL is not configured")
+    if settings.auth_mode.lower() == "jwks" and not getattr(settings, "auth_jwks_url", "") and not getattr(settings, "auth_oidc_issuer_url", ""):
+        warnings.append("AUTH_JWKS_URL or AUTH_OIDC_ISSUER_URL is not configured")
     checks.update({
         "database": {"ready": db_ready},
         "reliability": reliability_status,
@@ -137,9 +156,16 @@ def operations_readiness(
             "base_path": settings.artifact_base_path if artifact_backend == "local" else None,
         },
     })
+    production = build_production_readiness(settings, reliability_status)
+    observability = build_observability_readiness(settings)
     status = "ready" if db_ready and reliability_status.get("available", True) and not warnings else "degraded"
     if not db_ready or reliability_status.get("available") is False:
         status = "not_ready"
+    if production["enabled"] and production["status"] == "not_ready":
+        status = "not_ready"
+    elif production["enabled"] and production["status"] == "degraded" and status == "ready":
+        status = "degraded"
+    PRODUCTION_READINESS.set({"ready": 1, "degraded": 0, "not_ready": -1}.get(status, -1))
     return {
         "status": status,
         "app": {"name": settings.app_name, "version": settings.app_version, "env": settings.app_env},
@@ -155,11 +181,186 @@ def operations_readiness(
         },
         "dlq": {"topic": settings.dlq_topic},
         "checks": checks,
+        "production": production,
+        "observability": observability,
         "warnings": warnings,
     }
 
+
+def build_production_readiness(settings, reliability_status: dict) -> dict:
+    env = getattr(settings, "app_env", "local").lower()
+    is_production = env in {"prod", "production"}
+    checks = {
+        "app_env_production": _readiness_check(
+            "pass" if is_production else "warn",
+            f"APP_ENV={getattr(settings, 'app_env', 'local')}",
+        ),
+        "local_tokens_disabled": _readiness_check(
+            "pass" if not getattr(settings, "auth_local_tokens_enabled", True) else ("fail" if is_production else "warn"),
+            "local dev token endpoint is disabled" if not getattr(settings, "auth_local_tokens_enabled", True) else "local dev token endpoint is enabled",
+        ),
+        "secret_key_rotated": _readiness_check(
+            "pass" if getattr(settings, "app_secret_key", "change-me") not in {"", "change-me"} else ("fail" if is_production else "warn"),
+            "APP_SECRET_KEY is not the default value" if getattr(settings, "app_secret_key", "change-me") not in {"", "change-me"} else "APP_SECRET_KEY uses the default value",
+        ),
+        "auth_mode_jwks": _readiness_check(
+            "pass" if getattr(settings, "auth_mode", "local").lower() == "jwks" else ("fail" if is_production else "warn"),
+            f"AUTH_MODE={getattr(settings, 'auth_mode', 'local')}",
+        ),
+        "jwks_or_oidc_configured": _readiness_check(
+            "pass" if getattr(settings, "auth_jwks_url", "") or getattr(settings, "auth_oidc_issuer_url", "") else ("fail" if is_production else "warn"),
+            "JWKS URL or OIDC issuer URL is configured" if getattr(settings, "auth_jwks_url", "") or getattr(settings, "auth_oidc_issuer_url", "") else "JWKS URL and OIDC issuer URL are missing",
+        ),
+        "redis_reliability_store": _readiness_check(
+            "pass" if getattr(settings, "reliability_store", "memory").lower() == "redis" and reliability_status.get("backend") == "redis" else ("fail" if is_production else "warn"),
+            f"reliability_store={getattr(settings, 'reliability_store', 'memory')}, backend={reliability_status.get('backend')}",
+        ),
+        "kafka_configured": _readiness_check(
+            "pass" if bool(getattr(settings, "kafka_bootstrap_servers", "")) else ("fail" if is_production else "warn"),
+            "Kafka bootstrap servers are configured" if getattr(settings, "kafka_bootstrap_servers", "") else "Kafka bootstrap servers are missing",
+        ),
+        "s3_artifact_backend": _readiness_check(
+            "pass" if getattr(settings, "artifact_backend", "local").lower() == "s3" else ("fail" if is_production else "warn"),
+            f"ARTIFACT_BACKEND={getattr(settings, 'artifact_backend', 'local')}",
+        ),
+    }
+    failed = [name for name, check in checks.items() if check["status"] == "fail"]
+    warned = [name for name, check in checks.items() if check["status"] == "warn"]
+    status = "not_ready" if failed else ("degraded" if warned else "ready")
+    return {
+        "status": status,
+        "enabled": is_production,
+        "checks": checks,
+        "failures": failed,
+        "warnings": warned,
+    }
+
+
+def build_observability_readiness(settings) -> dict:
+    return {
+        "otel_ready": True,
+        "otel_enabled": bool(getattr(settings, "otel_enabled", False)),
+        "otel_service_name": getattr(settings, "otel_service_name", None) or getattr(settings, "app_name", "browser-agent"),
+        "otel_exporter_otlp_endpoint_configured": bool(getattr(settings, "otel_exporter_otlp_endpoint", "")),
+        "otel_resource_attributes": getattr(settings, "otel_resource_attributes", ""),
+        "otel_propagators": getattr(settings, "otel_propagators", "tracecontext,baggage"),
+        "log_schema_fields": LOG_SCHEMA_FIELDS,
+    }
+
+
+def _readiness_check(status: str, message: str) -> dict:
+    return {"status": status, "message": message}
+
+
+@router.get("/v1/ops/alerts")
+def get_ops_alerts(
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    from .alerts import evaluate_alerts
+    settings = get_settings()
+    return evaluate_alerts(session, settings)
+
+
+@router.post("/v1/ops/alerts/test-dispatch")
+def test_dispatch_alert(
+    req: AlertTestDispatchRequest,
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    from .alerts import dispatch_alert_webhook
+    settings = get_settings()
+    webhook_dispatched = dispatch_alert_webhook(
+        rule_id=req.rule_id,
+        note=req.note,
+        settings=settings,
+        actor_email=actor.email,
+        level=req.level,
+    )
+    write_audit(
+        session,
+        actor.tenant_id,
+        actor.email,
+        "alert.dispatched",
+        "alert",
+        req.rule_id,
+        {
+            "rule_id": req.rule_id,
+            "note": req.note,
+            "level": req.level,
+            "webhook_dispatched": webhook_dispatched,
+            "webhook_configured": bool(settings.alert_webhook_url),
+            "correlation_id": getattr(get_request_context(), "correlation_id", None),
+        },
+    )
+    session.commit()
+    return {
+        "dispatched": True,
+        "rule_id": req.rule_id,
+        "level": req.level,
+        "note": req.note,
+        "webhook_dispatched": webhook_dispatched,
+        "webhook_configured": bool(settings.alert_webhook_url),
+        "dispatched_by": actor.email,
+    }
+
+
+@router.get("/v1/ops/traces/{trace_id}")
+def get_trace_spans(
+    trace_id: str,
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    from .tracing import get_trace_buffer
+    buffer = get_trace_buffer()
+    spans = list(buffer.get_trace(trace_id))
+    existing_span_ids = {s.get("span_id") for s in spans}
+
+    tasks = session.execute(select(models.Task)).scalars().all()
+    for t in tasks:
+        tc = (getattr(t, "metadata_", {}) or {}).get("trace_context") or {}
+        if tc.get("trace_id") == trace_id or getattr(t, "correlation_id", "") == trace_id:
+            for step in getattr(t, "steps", []):
+                out = step.output_data or {}
+                sid = out.get("span_id")
+                if sid and sid not in existing_span_ids:
+                    spans.append({
+                        "name": f"browser.step:{step.action_type}",
+                        "trace_id": trace_id,
+                        "span_id": sid,
+                        "parent_span_id": tc.get("span_id"),
+                        "service": "browser-agent-worker",
+                        "start_time": step.created_at.isoformat() if step.created_at else "",
+                        "end_time": step.completed_at.isoformat() if step.completed_at else None,
+                        "duration_ms": out.get("duration_ms", 100),
+                        "status": "error" if step.status == "failed" else "ok",
+                        "attributes": {
+                            "task_id": str(t.id),
+                            "step_no": step.step_no,
+                            "action_type": step.action_type,
+                            "target": step.target,
+                        },
+                    })
+                    existing_span_ids.add(sid)
+            break
+
+    return {
+        "trace_id": trace_id,
+        "spans_count": len(spans),
+        "spans": spans,
+    }
+
+
+
 def _correlation_id(request: Request) -> str:
+    context = get_request_context()
+    if context:
+        return context.correlation_id
     return request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+
+
+def actor_request_payload(actor: ActorContext) -> dict:
+    return {**actor.audit_payload(), **request_context_payload()}
 
 @router.post("/v1/tasks")
 def create_task(
@@ -212,7 +413,7 @@ def create_task(
             req.model_dump(),
             correlation_id=correlation_id,
             actor_label=actor.email,
-            actor_payload=actor.audit_payload(),
+            actor_payload=actor_request_payload(actor),
             idempotency_key=idempotency_key,
             request_hash=request_hash if idempotency_key else None,
         )
@@ -348,7 +549,7 @@ def quarantine_dlq_task(
         {
             "correlation_id": task.correlation_id,
             "dlq": dlq,
-            **actor.audit_payload(),
+            **actor_request_payload(actor),
         },
     )
     session.commit()
@@ -460,9 +661,39 @@ def get_task_replay(
             "verdict": evaluation.verdict,
             "checks": evaluation.checks,
         })
+    steps_visual = []
+    for step in sorted(getattr(task, "steps", []), key=lambda item: item.step_no):
+        out = step.output_data or {}
+        art_id = out.get("screenshot_artifact_id")
+        steps_visual.append({
+            "step_no": step.step_no,
+            "action_type": step.action_type,
+            "target": step.target,
+            "status": step.status,
+            "duration_ms": out.get("duration_ms", 100),
+            "span_id": out.get("span_id"),
+            "screenshot_artifact_id": art_id,
+            "screenshot_url": f"/v1/artifacts/{art_id}/content" if art_id else None,
+            "dom_summary": out.get("dom_summary"),
+            "error_message": step.error_message,
+        })
+    eval_summary = None
+    if evaluations:
+        last_eval = evaluations[-1]
+        eval_summary = {
+            "verdict": last_eval.verdict,
+            "score": float(last_eval.score),
+            "checks": last_eval.checks,
+        }
+    trace_context = (getattr(task, "metadata_", {}) or {}).get("trace_context") or {}
+    trace_id = trace_context.get("trace_id") or getattr(task, "correlation_id", None)
+
     return {
         "task_id": str(task.id),
         "status": task.status,
+        "trace_id": trace_id,
+        "steps_visual": steps_visual,
+        "evaluation_summary": eval_summary,
         "timeline": timeline,
     }
 
@@ -614,7 +845,7 @@ def apply_dlq_replay(session: Session, task, actor: ActorContext, note: str) -> 
         {
             "correlation_id": task.correlation_id,
             "replay": replay,
-            **actor.audit_payload(),
+            **actor_request_payload(actor),
         },
     )
     return replay
@@ -629,7 +860,7 @@ def publish_replay_event(bus, task, actor: ActorContext, note: str) -> None:
         "approved_by": actor.email,
         "note": note,
         "correlation_id": task.correlation_id,
-        **actor.audit_payload(),
+        **actor_request_payload(actor),
     })
 
 def serialize_audit_log(entry) -> dict:
@@ -711,7 +942,7 @@ def approve_task(
             actor.user_id,
             actor.email,
             req.note if req else None,
-            actor_payload=actor.audit_payload(),
+            actor_payload=actor_request_payload(actor),
         )
         session.commit()
     except ValueError as exc:
@@ -766,6 +997,47 @@ def list_skills(
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(getattr(settings, "app_log_level", "INFO"))
-    app = FastAPI(title=getattr(settings, "app_name", "browser-agent"), version=getattr(settings, "app_version", "1.0.0"))
+    app = FastAPI(title=getattr(settings, "app_name", "browser-agent"), version=getattr(settings, "app_version", "1.1.0"))
+
+    @app.middleware("http")
+    async def correlation_middleware(request: Request, call_next):
+        context = build_request_context(request.headers, get_settings())
+        token = set_request_context(context)
+        started = time.monotonic()
+        try:
+            response = await call_next(request)
+            response.headers["X-Correlation-ID"] = context.correlation_id
+            HTTP_REQUESTS.labels(request.method, request.url.path, str(response.status_code)).inc()
+            HTTP_DURATION.labels(request.method, request.url.path).observe(time.monotonic() - started)
+            active_context = get_request_context() or context
+            logger.info(
+                "http request completed",
+                extra={
+                    **active_context.log_fields("http.request"),
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": response.status_code,
+                    "duration_ms": round((time.monotonic() - started) * 1000, 2),
+                },
+            )
+            from .tracing import get_trace_buffer, Span
+            get_trace_buffer().record(Span(
+                name=f"http.{request.method}:{request.url.path}",
+                trace_id=context.trace_id,
+                span_id=context.span_id,
+                parent_span_id=context.parent_span_id,
+                service=context.service_name,
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+                status="ok" if response.status_code < 400 else "error",
+                attributes={
+                    "http.method": request.method,
+                    "http.path": request.url.path,
+                    "http.status_code": response.status_code,
+                },
+            ))
+            return response
+        finally:
+            reset_request_context(token)
+
     app.include_router(router)
     return app

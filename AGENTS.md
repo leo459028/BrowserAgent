@@ -98,6 +98,7 @@ docker compose exec -T api pytest -q
 - 根目錄 `README.md` 是主要入口，分成 `一般版` 與 `技術版`；一般版只做版本文字同步，技術版才可完整更新。
 - `DOCS/OVERVIEW.md` 是文件索引，不要再新增 `DOCS/README.md`。
 - `/demo` 是本機測試 Dashboard，不是正式 production operator UI。
+- 若需要生成 AI 圖片資產，例如架構圖、資訊圖、封面圖、UI mockup 或文件插圖，預設使用 ChatGPT Image2 生圖模型；產出後要放入專案適當路徑，並用清楚的用途或版本檔名保存，避免覆蓋仍需保留的舊圖。
 - Planner 目前是 heuristic，不接外部 LLM。
 - SkillHub v0.4 只做 resolver metadata，不執行第三方 skill。
 - 若 Docker Compose 遇到 Kafka / Zookeeper stale session，可優先嘗試：

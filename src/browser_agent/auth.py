@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -13,6 +14,8 @@ from urllib.request import urlopen
 from fastapi import Depends, HTTPException, Request
 
 from .config import Settings, get_settings
+from .metrics import AUTH_FAILURES
+from .request_context import update_request_context
 
 LOCAL_DEV_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
@@ -40,6 +43,7 @@ LOCAL_DEV_ACTORS = {
 }
 
 RSA_SHA256_DER_PREFIX = bytes.fromhex("3031300d060960864801650304020105000420")
+_JSON_CACHE: dict[tuple[str, int, int], tuple[float, dict]] = {}
 
 ROLE_PERMISSIONS = {
     "creator": {
@@ -151,12 +155,14 @@ def decode_access_token(token: str, *, settings: Settings | None = None) -> Acto
     roles = payload.get("roles")
     if not isinstance(roles, list) or not all(isinstance(role, str) for role in roles):
         raise ValueError("invalid token roles")
-    return ActorContext(
+    actor = ActorContext(
         user_id=uuid.UUID(str(payload["sub"])),
         tenant_id=uuid.UUID(str(payload["tenant_id"])),
         email=str(payload["email"]),
         roles=tuple(roles),
     )
+    update_request_context(actor_email=actor.email, tenant_id=str(actor.tenant_id))
+    return actor
 
 
 def get_current_actor(request: Request) -> ActorContext:
@@ -170,6 +176,7 @@ def get_current_actor(request: Request) -> ActorContext:
     try:
         return decode_access_token(token, settings=settings)
     except Exception as exc:
+        AUTH_FAILURES.labels(reason="invalid_bearer_token").inc()
         raise _auth_error("invalid bearer token") from exc
 
 
@@ -231,9 +238,36 @@ def _decode_jwks_jwt(token: str, settings: Settings) -> dict:
 
 
 def _fetch_jwks(settings: Settings) -> dict:
-    if not settings.auth_jwks_url:
-        raise ValueError("AUTH_JWKS_URL is required in jwks auth mode")
-    with urlopen(settings.auth_jwks_url, timeout=5) as response:
+    jwks_url = getattr(settings, "auth_jwks_url", "") or ""
+    timeout_seconds = int(getattr(settings, "auth_jwks_request_timeout_seconds", 5) or 5)
+    if jwks_url:
+        return _fetch_cached_json_url(settings, jwks_url, timeout_seconds)
+    issuer_url = (getattr(settings, "auth_oidc_issuer_url", "") or "").rstrip("/")
+    if not issuer_url:
+        raise ValueError("AUTH_JWKS_URL or AUTH_OIDC_ISSUER_URL is required in jwks auth mode")
+    discovery = _fetch_cached_json_url(settings, f"{issuer_url}/.well-known/openid-configuration", timeout_seconds)
+    discovered_jwks_url = discovery.get("jwks_uri")
+    if not isinstance(discovered_jwks_url, str) or not discovered_jwks_url:
+        raise ValueError("OIDC discovery response is missing jwks_uri")
+    return _fetch_cached_json_url(settings, discovered_jwks_url, timeout_seconds)
+
+
+def _fetch_cached_json_url(settings: Settings, url: str, timeout_seconds: int) -> dict:
+    ttl_seconds = int(getattr(settings, "auth_jwks_cache_ttl_seconds", 0) or 0)
+    cache_key = (url, id(settings), id(_fetch_json_url))
+    now = time.time()
+    if ttl_seconds > 0:
+        cached = _JSON_CACHE.get(cache_key)
+        if cached and now - cached[0] <= ttl_seconds:
+            return cached[1]
+    payload = _fetch_json_url(url, timeout_seconds)
+    if ttl_seconds > 0:
+        _JSON_CACHE[cache_key] = (now, payload)
+    return payload
+
+
+def _fetch_json_url(url: str, timeout_seconds: int) -> dict:
+    with urlopen(url, timeout=timeout_seconds) as response:
         return json.loads(response.read().decode("utf-8"))
 
 

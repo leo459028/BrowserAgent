@@ -126,22 +126,23 @@ class TaskRunner:
             observation.get("step_no"): observation
             for observation in result.observations
         }
-        for step in task_steps:
-            observation = observations_by_step.get(step.step_no, {})
-            step.output_data = observation
-            step.status = "failed" if observation.get("error") else "completed"
-            step.completed_at = datetime.now(timezone.utc)
-            self.session.add(step)
 
+        trace_context = (task.metadata_ or {}).get("trace_context") or {}
+        trace_id = trace_context.get("trace_id") or task.correlation_id or "0" * 32
+        parent_span_id = trace_context.get("span_id")
+
+        artifact_records = []
         for artifact in result.artifacts:
             artifact_metadata = _artifact_metadata(artifact)
-            self.session.add(models.TaskArtifact(
+            art_record = models.TaskArtifact(
                 task_id=task.id,
                 artifact_type=artifact["type"],
                 uri=artifact["uri"],
                 sha256=artifact.get("sha256"),
                 metadata_=artifact_metadata,
-            ))
+            )
+            self.session.add(art_record)
+            artifact_records.append(art_record)
             write_audit(
                 self.session,
                 task.tenant_id,
@@ -160,6 +161,51 @@ class TaskRunner:
                     "correlation_id": task.correlation_id,
                 },
             )
+        self.session.flush()
+
+        screenshot_id = None
+        for art in artifact_records:
+            if art.artifact_type == "screenshot":
+                screenshot_id = str(art.id)
+                break
+
+        from .tracing import generate_span_id, get_trace_buffer, Span
+        buffer = get_trace_buffer()
+
+        for step in task_steps:
+            observation = dict(observations_by_step.get(step.step_no, {}))
+            step_span_id = generate_span_id()
+            observation["span_id"] = step_span_id
+            observation["duration_ms"] = round((time.monotonic() - started) * 1000 / max(len(task_steps), 1), 1)
+            if step.action_type == "screenshot" or (step == task_steps[-1] and screenshot_id):
+                observation["screenshot_artifact_id"] = screenshot_id
+            elif screenshot_id and not observation.get("screenshot_artifact_id"):
+                observation["screenshot_artifact_id"] = screenshot_id
+
+            if result.title:
+                observation["dom_summary"] = f"Page title: {result.title} | URL: {result.final_url}"
+
+            step.output_data = observation
+            step.status = "failed" if observation.get("error") else "completed"
+            step.completed_at = datetime.now(timezone.utc)
+            self.session.add(step)
+
+            # 記錄 Step Span 至 TraceBuffer
+            buffer.record(Span(
+                name=f"browser.step:{step.action_type}",
+                trace_id=trace_id,
+                span_id=step_span_id,
+                parent_span_id=parent_span_id,
+                service="browser-agent-worker",
+                duration_ms=observation["duration_ms"],
+                status="error" if step.status == "failed" else "ok",
+                attributes={
+                    "task_id": str(task.id),
+                    "step_no": step.step_no,
+                    "action_type": step.action_type,
+                    "target": step.target,
+                },
+            ))
 
         eval_result = evaluate_execution(
             {"metadata": task.metadata_},
