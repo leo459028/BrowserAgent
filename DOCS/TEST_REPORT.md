@@ -1,6 +1,203 @@
 # Test Report
 
-最後更新：2026-05-22
+最後更新：2026-09-04
+
+## V1.1 完整實作（E2E Tracing + Alerting Center + Visual Step Replay）測試結果
+
+日期：2026-09-04
+
+本次完整落實 V1.1 核心增強：
+1. **端到端分散式追蹤（E2E Distributed Tracing）**：基於 W3C `traceparent`、Span 生命週期管理、記憶體環形 TraceBuffer 與 `/v1/ops/traces/{trace_id}` 跨進程樹狀展示。
+2. **生產告警中心（Production Alerting Center）**：7 大維運規則即時評估（`GET /v1/ops/alerts`）、外部 Webhook（Slack/Discord）非阻塞背景轉發、手動測試派發通道（`POST /v1/ops/alerts/test-dispatch`）與 Audit 日誌。
+3. **可視化步驟回放（Visual Step Replay）**：擴充 `/v1/tasks/{task_id}/replay`，支援步驟分頁條、點選即時預覽截圖縮圖、DOM 結構摘要、執行毫秒耗時與 Span 關聯，100% 向後相容。
+4. **Operations Center UI 升級**：System Alert Badge、Production Alerting 卡片、Trace Inspector 面板、Visual Step Replay 步驟分頁導航。
+
+### 1. Host 測試結果
+
+```powershell
+pytest -q
+```
+**結果：74 passed, 2 warnings in 3.64s**（測試項目由 66 增加至 74，全部通過）。
+
+語法與代碼編譯檢查：
+```powershell
+python -m compileall src tests worker alembic
+```
+**結果：語法檢查全部通過，exit code 0。**
+
+Git Diff 格式檢查：
+```powershell
+git diff --check
+```
+**結果：完全整潔無尾隨空白，exit code 0。**
+
+Production-like Compose Config 檢查：
+```powershell
+docker compose --env-file .env.production.example -f docker-compose.prod.yml config
+```
+**結果：配置結構正確解析，exit code 0。**
+
+### 2. Docker 容器內測試結果
+
+在 Docker Desktop 啟動且全容器運作狀態下執行：
+```powershell
+docker compose exec -T api pytest -q
+```
+**結果：74 passed in 2.62s**（容器內與 Host 測試一致全部通過）。
+
+### 3. Docker 容器環境端到端 Smoke 實測（scratch/smoke_v11.ps1）
+
+針對運行中的 7 個 Docker 容器（API, Worker, Postgres, Redis, Kafka, Zookeeper, MinIO）執行真實端到端流程：
+1. **健康與告警檢查**：
+   - `GET /healthz` ➜ `{"status": "ok"}`
+   - `GET /v1/ops/alerts` ➜ 7 大規則即時評估回傳 `healthy: true`，`critical: 0`, `warning: 0`。
+2. **任務完整生命週期與 Tracing 追蹤**：
+   - 透過 `POST /v1/tasks` 建立任務，自動生成並綁定 Trace ID。
+   - 呼叫 `POST /v1/tasks/{task_id}/approve` 核准任務。
+   - Worker 成功消費 Kafka 佇列、啟動 Playwright 瀏覽器執行至 `completed`。
+   - MinIO / S3 成功寫入截圖 Artifact。
+3. **Visual Step Replay 驗證**：
+   - 呼叫 `GET /v1/tasks/{task_id}/replay`。
+   - 成功獲取 `steps_visual` 共 2 個步驟（`navigate` 與 `screenshot`）。
+   - 各步驟皆具備正確之 `duration_ms`、`span_id`、`dom_summary` 及截圖之 `screenshot_artifact_id`。
+   - 原始 `timeline` 保留完整的 lifecycle 事件。
+4. **跨進程 Trace Inspector 驗證**：
+   - 呼叫 `GET /v1/ops/traces/{trace_id}`。
+   - 成功跨進程整合記憶體 TraceBuffer 與 DB Task Steps，獲取 3 個階層式 Spans（HTTP Request, Kafka Publish, Worker Execution）。
+5. **外部告警通道測試派發**：
+   - 呼叫 `POST /v1/ops/alerts/test-dispatch`。
+   - 成功觸發非阻塞轉發，並於 `GET /v1/tasks/{task_id}/audit` 查獲 `alert.test_dispatched` 審計紀錄。
+
+---
+
+## 歷史紀錄：V1.1 Compose Production Readiness + OTEL-ready Schema 測試結果
+
+日期：2026-05-23
+
+本次完成 V1.1 第一階段：`/operations` 升級為 `Browser Agent v1.1 Operations Center`、OIDC discovery JWKS fallback、Production Readiness、Observability panel、HTTP correlation middleware、OTEL-ready log schema、HTTP/auth/readiness metrics、`.env.production.example` 與 `docker-compose.prod.yml`。
+
+### Host 測試
+
+Baseline 實作前：
+
+```text
+pytest -q
+57 passed, 2 warnings in 6.16s
+```
+
+V1.1 RED tests：
+
+```text
+pytest tests/test_v11_auth_oidc.py tests/test_v11_readiness_observability.py tests/test_v11_operations_ui.py tests/test_v11_compose_config.py -q
+9 failed
+```
+
+失敗點符合預期，包含 `_fetch_json_url` 尚不存在、readiness 尚未回 `production` / `observability`、correlation header 尚未回寫、Operations UI 尚未顯示 V1.1 panel，以及 production Compose/env 範本尚不存在。
+
+V1.1 targeted tests：
+
+```text
+pytest tests/test_v11_auth_oidc.py tests/test_v11_readiness_observability.py tests/test_v11_operations_ui.py tests/test_v11_compose_config.py -q
+9 passed, 2 warnings in 1.81s
+```
+
+全套 host tests：
+
+```text
+pytest -q
+66 passed, 2 warnings in 2.78s
+```
+
+語法檢查：
+
+```text
+python -m compileall src tests worker alembic
+exit code 0
+```
+
+Diff whitespace：
+
+```text
+git diff --check
+exit code 0
+```
+
+Production-like Compose config：
+
+```text
+docker compose --env-file .env.production.example -f docker-compose.prod.yml config
+exit code 0
+```
+
+Docker CLI 在 sandbox 內讀取 `C:\Users\leohung\.docker\config.json` 時出現 access denied warning；config 仍成功輸出。
+
+### Docker 驗證
+
+第一次在 sandbox 內執行：
+
+```powershell
+docker compose up -d --build
+```
+
+失敗原因是無法連線 Docker API：
+
+```text
+permission denied while trying to connect to the docker API at npipe:////./pipe/docker_engine
+```
+
+依權限流程用 escalated Docker access 重跑後成功：
+
+```text
+docker compose up -d --build
+exit code 0
+```
+
+Container pytest：
+
+```text
+docker compose exec -T api pytest -q
+66 passed in 2.47s
+```
+
+### Docker Operations Smoke
+
+執行項目：
+
+- `GET /operations`
+- `POST /v1/auth/local-token` for operator
+- `GET /v1/ops/readiness`
+- `GET /healthz` with `X-Correlation-ID` and `traceparent`
+
+實際結果：
+
+```json
+{
+  "operationsV11": true,
+  "readinessStatus": "ready",
+  "productionStatus": "degraded",
+  "otelReady": true,
+  "correlationHeader": "cid-v11-smoke"
+}
+```
+
+`productionStatus` 在預設 local Docker Compose stack 中為 `degraded` 是預期結果，因為該 stack 使用 local dev token 與 `APP_ENV=local`；整體 Operations Readiness 仍為 `ready`。Production-like 設定請用 `.env.production.example` / `docker-compose.prod.yml` 做 config smoke。
+
+### V1.1 Test Coverage
+
+- `/operations` render、V1.1 title、Production Readiness、Observability、external bearer token input。
+- JWKS URL 優先於 OIDC discovery。
+- `AUTH_OIDC_ISSUER_URL` discovery 可解析 `jwks_uri`，malformed discovery 回 `401`。
+- Production Readiness 對 local token、default secret、JWKS/OIDC、Redis reliability、Kafka、S3 backend 做 hard checks。
+- `X-Correlation-ID` 保留或自動產生，response header 正確回寫。
+- W3C `traceparent` 可解析到 request context；V1.1 不產生 fake trace span。
+- Production Compose/env 範本包含 V1.1、JWKS、Redis、S3、OTEL-ready defaults。
+
+### 目前限制
+
+- V1.1 是 OTEL-ready schema，不含 OpenTelemetry SDK、OTLP exporter 或 distributed tracing。
+- V1.1 支援 OIDC discovery JWKS verifier，但不含完整 login/callback/session flow。
+- 尚未做 Kubernetes/Helm、secrets vault、worker autoscaling 或 browser session DOM replay。
+- `.env.production.example` 使用 placeholder IdP/secret 值，只適合 config review 與 smoke，不可直接當正式 secrets 使用。
 
 ## V1.0 Operations Center 測試結果
 
@@ -148,18 +345,23 @@ DLQ bulk/quarantine smoke：
 - 尚未做 Kubernetes/Helm、secrets vault、OpenTelemetry tracing。
 - Replay-lite 不含 browser session 錄影或 DOM stream。
 
-## 2026-05-23 Architecture image archive
+## 2026-05-23 Architecture image archive and V1.1 refresh
 
 Change scope:
-- Archived generated architecture image to `DOCS/assets/browseragent-architecture.png`.
-- Added image reference/path notes to `DOCS/ARCHITECTURE.md`, `DOCS/OVERVIEW.md`, and the README technical documentation section.
+- Renamed the V1.0 architecture image to `DOCS/assets/browseragent-architecture-v1.0.png`.
+- Generated the V1.1 architecture image with ChatGPT Image2 and saved it to `DOCS/assets/browseragent-architecture-v1.1.png`.
+- Generated a Traditional Chinese V1.1 architecture image with ChatGPT Image2 and saved it to `DOCS/assets/browseragent-architecture-v1.1ch.png`.
+- Updated image reference/path notes in `DOCS/ARCHITECTURE.md`, `DOCS/OVERVIEW.md`, and the README technical documentation section.
 
 Commands and results:
-- `Test-Path DOCS\assets\browseragent-architecture.png` -> `True`
-- `Get-Item DOCS\assets\browseragent-architecture.png | Select-Object FullName,Length` -> `Length: 1579844`
-- `Test-Path (Join-Path (Resolve-Path DOCS) 'assets\browseragent-architecture.png')` -> `True`
+- `Test-Path DOCS\assets\browseragent-architecture-v1.0.png` -> `True`
+- `Test-Path DOCS\assets\browseragent-architecture-v1.1.png` -> `True`
+- `Test-Path DOCS\assets\browseragent-architecture-v1.1ch.png` -> `True`
+- `Get-Item DOCS\assets\browseragent-architecture-v1.0.png | Select-Object FullName,Length` -> `Length: 1579844`
+- `Get-Item DOCS\assets\browseragent-architecture-v1.1.png | Select-Object FullName,Length` -> `Length: 1442778`
+- `Get-Item DOCS\assets\browseragent-architecture-v1.1ch.png | Select-Object FullName,Length` -> `Length: 1498775`
 - `git diff --check` -> passed with exit code 0
 
 Limitations:
 - No Docker verification was needed because this change only archives a static documentation image and updates Markdown references.
-- One sandbox-only attempt to run a path check with `DOCS` as the command working directory failed during Windows sandbox setup; the equivalent root-workspace path check passed.
+- ChatGPT Image2 can render small text imperfectly; the generated image was visually inspected and kept because it clearly marks V1.1 and matches the current architecture at documentation level.

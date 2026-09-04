@@ -1,6 +1,6 @@
 # Data Model
 
-資料模型以 [src/browser_agent/models.py](../src/browser_agent/models.py) 為準。V1.0 不新增資料表，沿用 `tasks.metadata`、`audit_logs`、`task_steps`、`task_artifacts` 表達 Operations Center 所需資料。
+資料模型以 [src/browser_agent/models.py](../src/browser_agent/models.py) 為準。V1.1 不新增資料表或 migration，沿用 `tasks.metadata`、`audit_logs`、`task_steps`、`task_artifacts` 表達 Operations Center、Production Readiness 與 OTEL-ready correlation 所需資料。
 
 ## Local Dev Identity
 
@@ -26,6 +26,8 @@ Tenant：`00000000-0000-0000-0000-000000000001`。
 - `evaluation`：score、verdict、checks。
 - `reliability`：idempotency、DLQ、replay、quarantine metadata。
 
+V1.1 的 request/task 關聯以 `tasks.correlation_id` 為主。API 與 Worker 在 `tasks.metadata`、audit payload 與 Kafka event 中保留 `trace_context`（`{"trace_id": "...", "span_id": "..."}`），實現端到端分佈式追蹤，零 DB Migration。
+
 DLQ metadata 範例：
 
 ```json
@@ -50,7 +52,17 @@ Quarantine 後 `dlq.status` 會變成 `quarantined`，並新增 `dlq.quarantine.
 
 ## Task Steps
 
-V1.0 會在 worker execution 後更新 `task_steps.status` 與 `task_steps.output_data`，供 Replay-lite timeline 使用。
+Worker 執行後會更新 `task_steps.status` 與 `task_steps.output_data`。V1.1 的 `output_data` 擴充記錄以下視覺化步驟回放資訊：
+
+```json
+{
+  "duration_ms": 124.5,
+  "span_id": "e2a1b3c4d5f67890",
+  "screenshot_artifact_id": "00000000-0000-0000-0000-000000000099",
+  "dom_summary": "Example Domain (url: https://example.com/)",
+  "error": null
+}
+```
 
 ## Artifacts
 
@@ -78,3 +90,4 @@ S3 artifact metadata 會包含：
 - `task.artifact_written`
 - `task.evaluated`
 - `task.completed`
+- `alert.test_dispatched`（手動測試派發 Webhook 告警紀錄）

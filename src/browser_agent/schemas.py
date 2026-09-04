@@ -23,6 +23,12 @@ class DlqBulkReplayRequest(BaseModel):
 class DlqQuarantineRequest(BaseModel):
     reason: str
 
+class AlertTestDispatchRequest(BaseModel):
+    rule_id: str = "dlq_threshold"
+    note: str = "Test alert dispatch from Operations Center"
+    level: str = "warning"
+
+
 class SkillCreateRequest(BaseModel):
     name: str
     version: str

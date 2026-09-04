@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "browser-agent"
-    app_version: str = "1.0.0"
+    app_version: str = "1.1.0"
     app_env: str = "local"
     app_log_level: str = "INFO"
     app_secret_key: str = "change-me"
@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     auth_jwt_issuer: str = "browser-agent-local"
     auth_jwt_audience: str = "browser-agent-api"
     auth_jwks_url: str = ""
+    auth_oidc_issuer_url: str = ""
+    auth_jwks_cache_ttl_seconds: int = 300
+    auth_jwks_request_timeout_seconds: int = 5
     auth_token_ttl_seconds: int = 3600
     auth_local_tokens_enabled: bool = True
 
@@ -38,6 +41,18 @@ class Settings(BaseSettings):
     minio_access_key: str = "minio"
     minio_secret_key: str = "minio12345"
     minio_bucket: str = "browser-agent"
+
+    otel_enabled: bool = False
+    otel_service_name: str = "browser-agent"
+    otel_exporter_otlp_endpoint: str = ""
+    otel_resource_attributes: str = "service.namespace=browser-agent"
+    otel_propagators: str = "tracecontext,baggage"
+
+    alert_webhook_url: str = ""
+    alert_dlq_threshold: int = 5
+    alert_auth_failures_threshold: int = 10
+    alert_quarantine_threshold: int = 3
+    alert_webhook_timeout_seconds: float = 3.0
 
     @property
     def allowlist_domain_set(self) -> set[str]:
