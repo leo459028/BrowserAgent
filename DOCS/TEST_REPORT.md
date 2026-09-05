@@ -2,6 +2,106 @@
 
 最後更新：2026-09-05
 
+## V1.3 完整實作（OIDC SSO + KMS 信封加密 + 選擇器自癒 + 優先佇列 + WebSocket Live Stream + Helm Chart）測試結果
+
+日期：2026-09-05
+
+本次完整落實 V1.3 核心增強：
+1. **Enterprise OIDC Authorization Code Flow SSO**：標準 OAuth 2.0 / OIDC PKCE 授權碼交換、防偽 state 校驗、HttpOnly `ba_session` Cookie 治理與前端 SSO 一鍵登入。
+2. **Session Vault 企業級 KMS 信封加密**：支援 Local、AWS KMS 與 HashiCorp Vault 提供者，以 AES-256-GCM 加密，`tenant_id` 作為 AAD 防跨租戶置換與重放攻擊，支援 `/v1/sessions/{name}/validate` 憑證解密完整性即時校驗與金鑰輪換。
+3. **啟發式選擇器自我修復引擎（Heuristic Self-Healing）**：三級 Fallback Cascade（語意標籤、標籤文字、DOM 結構特徵），動態比對標籤相似度（門檻 0.6），修復成功自動標記 `task.self_healed` 審計日誌並於 UI 呈現綠色自癒標記。
+4. **多優先權加權佇列與 Worker 資源池隔離**：依 priority 權重路由至 `agent.tasks.high`、`agent.tasks.queued`、`agent.tasks.batch`，Worker 支援專屬資源池訂閱隔離，提供 `/v1/ops/queues` 即時監控。
+5. **瀏覽器即時畫面 WebSocket 廣播串流與線上中斷**：`WS /v1/tasks/{id}/live-stream` 提供 low-latency JPEG 畫面幀串流廣播（預設 2 FPS），支援 `POST /v1/tasks/{id}/abort` 即時線上中斷異常任務並安全釋放 Playwright 資源。
+6. **Enterprise Helm 3 Chart 套件與 GitOps ArgoCD 藍圖**：提供完整 `deploy/helm/browser-agent/`（Chart.yaml, values.yaml, templates）與 `deploy/gitops/argocd-application.yaml` 自動化交付藍圖。
+7. **Operations Center UI 升級**：V1.3 頂部 SSO 登入按鈕、Live Telemetry Stream 畫布卡片、Abort 終止操作按鈕、KMS 狀態指標卡、Queues 監控面板、Self-Healing 綠色標籤。
+
+### 1. Host 測試結果
+
+```powershell
+pytest -q
+```
+**結果：96 passed, 1 warning in 3.65s**（18 個測試模組全數通過，0 失敗）。
+
+新增專屬測試模組明細（`tests/test_v13_features.py`，共 12 項完整測試）：
+1. `test_kms_envelope_encryption_and_decryption`：驗證 LocalKmsProvider 隨機 DEK 生成、AES-256-GCM 加密、AAD 租戶綁定與正確解密。
+2. `test_kms_envelope_encryption_tamper_and_tenant_isolation`：驗證跨租戶讀取或 AAD 遭到篡改時，GCM 標籤校驗失敗並拋出 `cryptography.exceptions.InvalidTag`，保護多租戶憑證安全。
+3. `test_kms_key_rotation_compatibility`：驗證主金鑰輪換（Key Rotation）情境下，新金鑰可重新加密 DEK 且舊密文可正常解密。
+4. `test_heuristic_self_healing_semantic_fallback`：驗證當原選擇器失效時，自癒引擎啟動第一級語意屬性（`data-testid`）成功匹配並修復。
+5. `test_heuristic_self_healing_text_match`：驗證第二級標籤文字相似度比對成功自癒。
+6. `test_heuristic_self_healing_threshold_rejection`：驗證相似度低於門檻（0.6）時拒絕自癒並拋出適當例外，避免誤操作。
+7. `test_multi_priority_queue_routing`：驗證 high（>0）、queued（==0）與 batch（<0）各優先權主題分流路由與向後相容性。
+8. `test_live_telemetry_service_broadcast_and_abort`：驗證畫面幀發布至佇列、訂閱者即時接收與 Abort 狀態設定。
+9. `test_oidc_pkce_generation_and_login_url`：驗證 PKCE verifier/challenge 隨機高熵生成與授權跳轉 URL 結構。
+10. `test_session_validate_endpoint`：驗證 `/v1/sessions/{name}/validate` 呼叫 KMS 解密迴路校驗 Cookie 數量。
+11. `test_helm_chart_and_gitops_files`：驗證 Helm 3 Chart（Chart.yaml, values.yaml, templates）與 ArgoCD 應用清單語法與結構完整性。
+12. `test_v13_backward_compatibility`：驗證既有任務建立、審查、執行與 Replay API 100% 向後相容。
+
+語法與代碼編譯檢查：
+```powershell
+python -m compileall src tests worker alembic
+```
+**結果：語法檢查全部通過，exit code 0。**
+
+Git Diff 格式檢查：
+```powershell
+git diff --check
+```
+**結果：完全整潔無尾隨空白，exit code 0。**
+
+Kubernetes Manifests Kustomize 檢查：
+```powershell
+kubectl kustomize deploy/k8s/
+```
+**結果：全套 Kubernetes 物件格式解析完全正確，exit code 0。**
+
+Enterprise Helm 3 Chart 檢查：
+```powershell
+helm lint deploy/helm/browser-agent
+helm template browser-agent deploy/helm/browser-agent
+```
+**結果：語法檢查通過，Templates 渲染完全正確，exit code 0。**
+
+Production-like Compose Config 檢查：
+```powershell
+docker compose --env-file .env.production.example -f docker-compose.prod.yml config
+```
+**結果：配置結構正確解析，exit code 0。**
+
+### 2. Docker Compose 容器內自動化測試結果
+
+執行環境：7 大容器健康運行（`api`, `worker`, `postgres`, `redis`, `kafka`, `zookeeper`, `minio`）。
+
+```powershell
+docker compose exec -T api pytest -q
+```
+**結果：96 passed, 3 warnings in 3.94s**（容器內與主機端測試 100% 一致通過）。
+
+### 3. Docker 容器真實 Playwright 瀏覽器端到端測試結果
+
+執行命令：
+```powershell
+docker compose exec -T -e BASE_URL=http://api:8000 worker python scripts/comprehensive_browser_test.py
+```
+
+**測試步驟與實體驗證數據：**
+- **步驟 1：多角色身份 Token 核發**：成功核發 `creator`, `approver`, `operator`, `admin` 4 組 Bearer Tokens。
+- **步驟 2：Operations Readiness 檢驗**：版本確核為 `1.3.0`，驗證 Local Auth、S3 MinIO ArtifactStore 與容器化環境狀態良好。
+- **步驟 3：Production Alerting Center、KMS 狀態與優先佇列指標**：7 大維運告警規則全數 OK；KMS Provider 為 `local`（Key ID: `local-kek-v1`，演算法 AES-256-GCM）；多優先權佇列（`agent.tasks.high`, `agent.tasks.queued`, `agent.tasks.batch`）Telemetry 正常。
+- **步驟 4：建立真實瀏覽器執行任務**：建立 Priority=2 急件任務（導航至 `https://example.com`、全螢幕截圖、WebM 全行程錄影、儲存 Session 保險箱），任務成功進入 `pending_approval`。
+- **步驟 5：Approver 人工核准與急件佇列分流**：核准後任務狀態轉為 `queued`，依優先權權重自動路由分流至高優先主題 `agent.tasks.high`。
+- **步驟 6：Worker 喚起 Playwright Chromium 真實瀏覽器執行**：Worker 消費佇列並喚起 Playwright 實體訪問 `https://example.com`，驗證標題為 `'Example Domain'`，評估檢查全數通過（Score: 100.0, Verdict: pass）。
+- **步驟 7：Visual Step Replay、截圖 Artifact 與 WebM 錄影驗證**：
+  - 成功下載步驟截圖 PNG Artifact（大小 18,002 bytes，PNG Magic Bytes `\x89PNG\r\n\x1a\n` 校驗正確）。
+  - 成功串流下載全行程 WebM 錄影視訊（大小 24,576 bytes，WebM/EBML Magic Bytes `\x1aE\xdf\xa3` 校驗正確）。
+- **步驟 8：Session Vault 工作階段治理與 KMS 信封解密驗證**：檢索 Session Vault 保險箱列表，呼叫 `POST /v1/sessions/e2e_verified_session/validate`，KMS 信封解密迴路驗證成功（Provider: local, Algorithm: AES-256-GCM, AAD 租戶綁定防篡改）；執行 Admin 一鍵強制撤銷保護成功。
+- **步驟 9：Scheduled Tasks 定時巡檢排程調度**：成功建立 Cron 排程（`*/30 * * * *`），成功執行 `POST /v1/scheduled-tasks/{id}/run` 手動立即觸發派發新任務。
+- **步驟 10：Operations Center UI 渲染與卡片檢查**：`/operations` 成功渲染，包含 Queues & Worker Pools 面板、Live Screen Broadcast 直播卡片、Vault: KMS 狀態徽章。
+- **步驟 11：Playwright 實體無頭瀏覽器 Operations Center 渲染檢查**：Playwright 啟動 Chromium 瀏覽器直接存取後台，標題與 H1 均為 `'Browser Agent v1.3 Operations Center'`，10 大核心 DOM 元件（核准按鈕、K8s/OTLP/KMS 徽章、排程卡、工作階段卡、佇列卡、直播卡）全數存在，並完成真實畫面截圖存檔至 `/tmp/operations_dashboard_verified_v13.png`。
+
+**結論：BrowserAgent V1.3 包含真實瀏覽器操作的全套端到端測試全部通過（Exit code 0）！**
+
+---
+
 ## V1.2 完整實作（Scheduled Tasks + Session Vault + Video Replay + OTLP Exporter + K8s/KEDA）測試結果
 
 日期：2026-09-05

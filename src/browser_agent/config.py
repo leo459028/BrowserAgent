@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "browser-agent"
-    app_version: str = "1.2.0"
+    app_version: str = "1.3.0"
     app_env: str = "local"
     app_log_level: str = "INFO"
     app_secret_key: str = "change-me"
@@ -20,12 +20,40 @@ class Settings(BaseSettings):
     auth_token_ttl_seconds: int = 3600
     auth_local_tokens_enabled: bool = True
 
+    # V1.3 OIDC Authorization Code Flow
+    auth_oidc_client_id: str = "browser-agent-client"
+    auth_oidc_client_secret: str = "client-secret-change-me"
+    auth_oidc_redirect_uri: str = "http://localhost:8000/v1/auth/oidc/callback"
+    auth_oidc_authorization_endpoint: str = ""
+    auth_oidc_token_endpoint: str = ""
+    auth_oidc_userinfo_endpoint: str = ""
+
+    # V1.3 Enterprise KMS 信封加密
+    kms_provider: str = "local"  # "local" | "aws" | "vault"
+    kms_master_key: str = "01234567890123456789012345678901"  # 32-byte string for local AES-256-GCM
+    kms_key_id: str = "local-kek-v1"
+    kms_region: str = "us-east-1"
+    vault_addr: str = "http://localhost:8200"
+    vault_token: str = ""
+
     database_url: str = "postgresql+psycopg://agent:agent@localhost:5432/agent"
     redis_url: str = "redis://localhost:6379/0"
     kafka_bootstrap_servers: str = ""
     artifact_backend: str = "local"
     artifact_base_path: str = "/tmp/browser-agent/artifacts"
     reliability_store: str = "memory"
+
+    # V1.3 多優先權佇列與 Worker 資源池
+    multi_priority_enabled: bool = True
+    queue_high_topic: str = "agent.tasks.high"
+    queue_default_topic: str = "agent.tasks.queued"
+    queue_batch_topic: str = "agent.tasks.batch"
+    worker_pool: str = "default"
+
+    # V1.3 即時廣播與自癒引擎
+    live_broadcast_enabled: bool = True
+    self_healing_enabled: bool = True
+    self_healing_threshold: float = 0.75
 
     allowlist_domains: str = "example.com,example.org"
     task_create_rate_limit_per_minute: int = 60

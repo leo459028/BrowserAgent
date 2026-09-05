@@ -118,7 +118,7 @@ class TaskRunner:
         loaded_storage_state = None
         if use_session:
             from sqlalchemy import select
-            import json
+            from .crypto.kms import decrypt_session_vault_payload
             session_artifacts = (
                 self.session.execute(
                     select(models.TaskArtifact)
@@ -137,20 +137,48 @@ class TaskRunner:
                 if meta.get("session_name") == use_session:
                     try:
                         c_bytes = self.artifact_store.read_bytes(sa.uri)
-                        loaded_storage_state = json.loads(c_bytes.decode("utf-8"))
+                        loaded_storage_state = decrypt_session_vault_payload(
+                            c_bytes,
+                            meta,
+                            tenant_id=str(task.tenant_id),
+                        )
                         break
                     except Exception:
                         pass
 
-        result = self.browser.execute(
-            {
-                "id": str(task.id),
-                "metadata": task.metadata_,
-            },
-            self.artifact_store,
-            self.allowed_domains,
-            storage_state=loaded_storage_state,
-        )
+        from .services.live_telemetry import ExecutionAbortedException
+
+        try:
+            result = self.browser.execute(
+                {
+                    "id": str(task.id),
+                    "tenant_id": str(task.tenant_id),
+                    "metadata": task.metadata_,
+                },
+                self.artifact_store,
+                self.allowed_domains,
+                storage_state=loaded_storage_state,
+            )
+        except ExecutionAbortedException as abort_exc:
+            task.completed_at = datetime.now(timezone.utc)
+            set_task_status(self.session, task, "aborted")
+            task.metadata_ = {
+                **(task.metadata_ or {}),
+                "aborted": True,
+                "abort_reason": abort_exc.reason,
+            }
+            self.session.add(task)
+            write_audit(
+                self.session,
+                task.tenant_id,
+                self.worker_actor,
+                "task.aborted",
+                "task",
+                str(task.id),
+                {"reason": abort_exc.reason, "correlation_id": task.correlation_id},
+            )
+            return task.metadata_
+
 
         observations_by_step = {
             observation.get("step_no"): observation
@@ -236,8 +264,30 @@ class TaskRunner:
                     "step_no": step.step_no,
                     "action_type": step.action_type,
                     "target": step.target,
+                    "self_healed": bool(observation.get("self_healed")),
                 },
             ))
+
+        # 統計自癒事件
+        healed_steps = [
+            s.output_data.get("self_healing")
+            for s in task_steps
+            if s.output_data and s.output_data.get("self_healed")
+        ]
+        if healed_steps:
+            write_audit(
+                self.session,
+                task.tenant_id,
+                self.worker_actor,
+                "task.self_healed",
+                "task",
+                str(task.id),
+                {
+                    "healed_count": len(healed_steps),
+                    "healed_steps": healed_steps,
+                    "correlation_id": task.correlation_id,
+                },
+            )
 
         eval_result = evaluate_execution(
             {"metadata": task.metadata_},
@@ -284,7 +334,9 @@ class TaskRunner:
                 "checks": eval_result.checks,
             },
             **({"video_artifact_id": video_id} if video_id else {}),
+            **({"self_healing": {"healed_count": len(healed_steps), "details": healed_steps}} if healed_steps else {}),
         }
+
         self.session.add(task)
         write_audit(
             self.session,

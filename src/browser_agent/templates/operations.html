@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Browser Agent v1.2 Operations Center</title>
+  <title>Browser Agent v1.3 Operations Center</title>
   <style>
     :root {
       color-scheme: light;
@@ -198,24 +198,28 @@
     <header>
       <div>
         <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
-          <h1 style="margin:0;">Browser Agent v1.2 Operations Center</h1>
+          <h1 style="margin:0;">Browser Agent v1.3 Operations Center (維運中心)</h1>
           <span id="system-alert-badge" class="status pass" style="font-size: 12px;">All Systems Normal</span>
-          <span id="k8s-platform-badge" class="status pass" style="font-size: 12px;">Platform: Docker/Standalone</span>
+          <span id="vault-kms-badge" class="status pass" style="font-size: 12px;">Vault: KMS (AES-256-GCM)</span>
+          <span id="oidc-sso-badge" class="status pass" style="font-size: 12px;">OIDC: Ready</span>
+          <span id="k8s-platform-badge" class="status pass" style="font-size: 12px;">Platform: K8s/Helm Ready</span>
           <span id="otlp-stream-badge" class="status pass" style="font-size: 12px;">OTLP: Ready</span>
         </div>
-        <div class="muted">Operations center for Scheduled Tasks, Session Vault, Video Replay, OTLP Streaming, Kubernetes Readiness, production readiness, and artifact governance.</div>
+        <div class="muted">Enterprise Operations Center: KMS Envelope Vault, Heuristic Self-Healing, WebSocket Live Broadcast, Multi-Priority Pools, Helm GitOps & OIDC SSO. (Browser Agent v1.2 Operations Center compatible)</div>
       </div>
       <div class="toolbar">
+        <button id="btn-sso-login" class="secondary" title="Sign in via Enterprise OpenID Connect Provider">SSO Login with IdP</button>
         <button id="refresh" class="secondary">Refresh</button>
         <button id="register-skills" class="secondary">Register built-in skills</button>
         <button id="approve" disabled>Approve selected</button>
       </div>
     </header>
 
+
     <div class="layout">
       <div class="stack">
         <section>
-          <h2>Operations Readiness</h2>
+          <h2>Operations Readiness (維運就緒度)</h2>
           <div class="kv">
             <div class="label">Status</div><div><span id="ops-readiness" class="status">checking</span></div>
             <div class="label">Auth</div><div id="ops-auth" class="value">-</div>
@@ -225,7 +229,7 @@
         </section>
 
         <section>
-          <h2>Production Readiness</h2>
+          <h2>Production Readiness (生產就緒度)</h2>
           <div class="kv">
             <div class="label">Status</div><div><span id="production-readiness" class="status">checking</span></div>
             <div class="label">Failures</div><div id="production-failures" class="value">-</div>
@@ -236,7 +240,7 @@
 
         <section id="alerting-section">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-            <h2 style="margin:0;">Production Alerting Center</h2>
+            <h2 style="margin:0;">Production Alerting Center (生產告警中心)</h2>
             <div style="display:flex; gap:6px;">
               <button id="refresh-alerts" class="secondary" style="min-height:30px; font-size:12px; padding:0 8px;">Refresh</button>
               <button id="test-dispatch-alert" class="secondary" style="min-height:30px; font-size:12px; padding:0 8px;">Test Dispatch</button>
@@ -251,7 +255,7 @@
         </section>
 
         <section>
-          <h2>Observability</h2>
+          <h2>Observability (可觀測性)</h2>
           <div class="kv">
             <div class="label">OTEL-ready</div><div><span id="otel-ready" class="status">checking</span></div>
             <div class="label">Exporter</div><div id="otel-exporter" class="value">-</div>
@@ -259,7 +263,7 @@
             <div class="label">Log schema</div><div id="log-schema" class="value">-</div>
           </div>
           <div style="margin-top:12px; padding-top:10px; border-top:1px dashed var(--line);">
-            <div style="font-weight:600; font-size:13px; margin-bottom:6px;">Trace Inspector</div>
+            <div style="font-weight:600; font-size:13px; margin-bottom:6px;">Trace Inspector (分散式追蹤檢查器)</div>
             <div style="display:flex; gap:6px; margin-bottom:8px;">
               <input id="trace-lookup-input" placeholder="Enter Trace ID..." style="min-height:32px; min-width:180px; font-size:12px; padding:0 8px;">
               <button id="trace-lookup-btn" class="secondary" style="min-height:32px; font-size:12px; padding:0 10px;">Lookup</button>
@@ -269,7 +273,7 @@
         </section>
 
         <section>
-          <h2>Create Task</h2>
+          <h2>Create Task (建立任務)</h2>
           <div class="button-row">
             <select id="scenario"></select>
             <button id="create-task">Create task</button>
@@ -279,7 +283,7 @@
         </section>
 
         <section>
-          <h2>Runtime</h2>
+          <h2>Runtime (執行環境)</h2>
           <div class="kv">
             <div class="label">Health</div><div><span id="health" class="status">checking</span></div>
             <div class="label">Ready</div><div><span id="ready" class="status">checking</span></div>
@@ -289,7 +293,7 @@
         </section>
 
         <section>
-          <h2>Identity / RBAC</h2>
+          <h2>Identity / RBAC (身份認證與角色權限)</h2>
           <div class="button-row">
             <select id="active-role"></select>
             <button id="forbidden-create" class="secondary">Try operator create</button>
@@ -308,7 +312,7 @@
         </section>
 
         <section>
-          <h2>Reliability / DLQ</h2>
+          <h2>Reliability / DLQ (可靠性與死信佇列)</h2>
           <div class="button-row">
             <button id="idempotency-smoke" class="secondary">Idempotency smoke</button>
             <button id="refresh-dlq" class="secondary">Refresh DLQ</button>
@@ -321,24 +325,39 @@
             <div class="label">DLQ topic</div><div id="dlq-topic" class="value">-</div>
             <div class="label">Idempotency</div><div id="idempotency-result" class="value">-</div>
           </div>
-          <h2 style="margin-top:16px">DLQ Tasks</h2>
+          <h2 style="margin-top:16px">DLQ Tasks (死信任務列表)</h2>
           <div id="dlq-list" class="muted">No DLQ tasks loaded.</div>
         </section>
 
+        <section id="queues-section">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h2 style="margin:0;">Queues & Worker Pools (佇列與工作進程池)</h2>
+            <button id="refresh-queues" class="secondary" style="min-height:28px; font-size:12px; padding:0 8px;">Refresh</button>
+          </div>
+          <div class="kv">
+            <div class="label">Priority Routing</div><div id="queue-multi-priority" class="value">Enabled</div>
+            <div class="label">Worker Pool</div><div id="queue-worker-pool" class="value">default</div>
+            <div class="label">High Priority</div><div id="queue-topic-high" class="value">agent.tasks.high</div>
+            <div class="label">Default Queue</div><div id="queue-topic-default" class="value">agent.tasks.queued</div>
+            <div class="label">Batch Queue</div><div id="queue-topic-batch" class="value">agent.tasks.batch</div>
+          </div>
+        </section>
+
         <section>
-          <h2>Metrics</h2>
+          <h2>Metrics (系統指標)</h2>
+
           <pre id="metrics">Loading metrics...</pre>
         </section>
 
         <section>
-          <h2>Recent Tasks</h2>
+          <h2>Recent Tasks (近期任務)</h2>
           <div id="task-list" class="muted">No tasks loaded.</div>
         </section>
       </div>
 
       <div class="stack">
         <section>
-          <h2>Task Detail</h2>
+          <h2>Task Detail (任務詳情)</h2>
           <div class="kv">
             <div class="label">Task ID</div><div id="task-id" class="value">-</div>
             <div class="label">Status</div><div><span id="task-status" class="status">idle</span></div>
@@ -351,7 +370,7 @@
         </section>
 
         <section>
-          <h2>Planner / SkillHub</h2>
+          <h2>Planner / SkillHub (規劃器與技能中心)</h2>
           <div class="kv">
             <div class="label">Version</div><div id="planner-version" class="value">-</div>
             <div class="label">Source</div><div id="planner-source" class="value">-</div>
@@ -359,29 +378,29 @@
             <div class="label">Fallback</div><div><span id="planner-fallback" class="status">idle</span></div>
             <div class="label">SkillHub</div><div id="skillhub-summary" class="value">-</div>
           </div>
-          <h2 style="margin-top:16px">Planner validation errors</h2>
+          <h2 style="margin-top:16px">Planner validation errors (規劃驗證錯誤)</h2>
           <pre id="planner-errors">[]</pre>
-          <h2 style="margin-top:16px">Resolved skills</h2>
+          <h2 style="margin-top:16px">Resolved skills (已解析技能)</h2>
           <div id="resolved-skills" class="muted">No planner steps yet.</div>
         </section>
 
         <section>
-          <h2>Status Flow</h2>
+          <h2>Status Flow (狀態流程)</h2>
           <div id="status-flow" class="flow"></div>
         </section>
 
         <section>
-          <h2>Audit Timeline</h2>
+          <h2>Audit Timeline (審計時間軸)</h2>
           <div id="audit" class="muted">Select a task to inspect audit events.</div>
         </section>
 
         <section>
-          <h2>Artifacts</h2>
+          <h2>Artifacts (任務產出物)</h2>
           <div id="artifacts" class="muted">Select or run a task to inspect artifacts.</div>
         </section>
 
         <section>
-          <h2>Artifact Query</h2>
+          <h2>Artifact Query (產出物查詢)</h2>
           <div class="button-row">
             <select id="artifact-select"></select>
             <button id="artifact-check" class="secondary" disabled>Check access</button>
@@ -393,7 +412,7 @@
 
         <section id="visual-replay-section">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-            <h2 style="margin:0;">Visual Step Replay & Replay Timeline</h2>
+            <h2 style="margin:0;">Visual Step Replay & Replay Timeline (可視化步驟回放與時間軸)</h2>
             <span id="replay-trace-id" class="muted" style="font-size:12px; font-family:monospace;"></span>
           </div>
           <div id="step-tabs-container" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;">
@@ -402,7 +421,7 @@
           <div id="step-viewer-card" style="display:none; border:1px solid var(--line); border-radius:6px; padding:12px; background:var(--panel-soft); margin-bottom:12px;">
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
               <div>
-                <div style="font-weight:700; margin-bottom:6px;" id="step-viewer-title">Step Details</div>
+                <div style="font-weight:700; margin-bottom:6px;" id="step-viewer-title">Step Details (步驟詳情)</div>
                 <div class="kv" style="font-size:13px;">
                   <div class="label">Action</div><div id="step-viewer-action" class="value">-</div>
                   <div class="label">Target</div><div id="step-viewer-target" class="value" style="word-break:break-all;">-</div>
@@ -410,34 +429,56 @@
                   <div class="label">Duration</div><div id="step-viewer-duration" class="value">-</div>
                   <div class="label">Span ID</div><div id="step-viewer-span" class="value" style="font-family:monospace;">-</div>
                   <div class="label">DOM Summary</div><div id="step-viewer-dom" class="value" style="font-size:12px;">-</div>
+                  <div class="label">Self-Healing</div><div id="step-viewer-healing" class="value">-</div>
                 </div>
               </div>
               <div>
-                <div style="font-weight:700; margin-bottom:6px;">Screenshot Preview</div>
+                <div style="font-weight:700; margin-bottom:6px;">Screenshot Preview (截圖預覽)</div>
                 <div id="step-viewer-screenshot" style="min-height:160px; display:flex; align-items:center; justify-content:center; background:#fff; border:1px solid var(--line); border-radius:4px; overflow:hidden;">
                   <span class="muted" style="font-size:12px;">No screenshot for this step</span>
                 </div>
               </div>
             </div>
+          </div>
+
+          <div id="live-broadcast-card" style="border:1px solid var(--line); border-radius:6px; padding:12px; background:var(--panel-soft); margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span style="font-weight:700;">Live Screen Broadcast (WebSocket Telemetry) (即時畫面廣播)</span>
+                <span id="live-status-pill" class="status warn" style="font-size:11px; min-height:18px; padding:0 6px;">STANDBY</span>
+              </div>
+              <button id="btn-abort-task" class="danger" style="min-height:28px; font-size:12px; padding:0 10px;" disabled>Abort Execution</button>
+            </div>
+            <div id="live-screen-container" style="min-height:180px; display:flex; align-items:center; justify-content:center; background:#000; border-radius:4px; overflow:hidden;">
+              <img id="live-screen-img" src="" alt="Live Stream Frame" style="max-width:100%; max-height:360px; display:none;" />
+              <span id="live-screen-placeholder" class="muted" style="color:#aaa; font-size:13px;">No active live execution streaming. Select an executing task to inspect live screen.</span>
+            </div>
+            <div id="live-stream-meta" style="margin-top:6px; font-size:12px; color:var(--muted); display:flex; justify-content:space-between;">
+              <span id="live-stream-step">Step: -</span>
+              <span id="live-stream-url">URL: -</span>
+            </div>
+          </div>
+
           <div id="video-player-card" style="border:1px solid var(--line); border-radius:6px; padding:12px; background:var(--panel-soft); margin-bottom:12px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-              <span style="font-weight:700;">Full WebM Video Recording (Playwright)</span>
+              <span style="font-weight:700;">Full WebM Video Recording (Playwright) (全行程 WebM 錄影視訊)</span>
               <span id="video-status-label" class="status pass" style="font-size:11px; min-height:18px; padding:0 6px;">Available</span>
             </div>
+
             <video id="step-video-element" controls style="width:100%; max-height:360px; background:#000; border-radius:4px;"></video>
             <div id="video-placeholder" style="display:none; padding:16px; text-align:center; background:#fff; border:1px dashed var(--line); border-radius:4px; font-size:12px; color:var(--muted);">
               此任務未包含視訊錄製（未設定 <code>record_video: true</code>）。若需錄影，請在建立任務時於 metadata 加入 <code>"record_video": true</code>，或在左側 Recent Tasks 點選帶有視訊的任務（例如 <code>E2E Browser Automation Smoke Test</code>）。
             </div>
           </div>
           <details>
-            <summary style="cursor:pointer; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:6px;">Raw Timeline Events</summary>
+            <summary style="cursor:pointer; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:6px;">Raw Timeline Events (原始時間軸事件)</summary>
             <div id="replay-timeline" class="muted">Select a task to inspect replay timeline.</div>
           </details>
         </section>
 
         <section id="scheduled-tasks-section">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-            <h2 style="margin:0;">Scheduled Tasks (Cron Engine)</h2>
+            <h2 style="margin:0;">Scheduled Tasks (Cron Engine) (定時排程任務)</h2>
             <div style="display:flex; gap:6px;">
               <button id="refresh-schedules" class="secondary" style="min-height:30px; font-size:12px; padding:0 8px;">Refresh</button>
               <button id="evaluate-schedules-now" class="secondary" style="min-height:30px; font-size:12px; padding:0 8px;">Evaluate Due</button>
@@ -446,7 +487,7 @@
           <div id="scheduled-tasks-list" class="muted">Loading scheduled tasks...</div>
 
           <details style="margin-top:10px;">
-            <summary style="cursor:pointer; font-size:13px; font-weight:600; color:var(--text); margin-bottom:8px;">+ Create New Scheduled Task</summary>
+            <summary style="cursor:pointer; font-size:13px; font-weight:600; color:var(--text); margin-bottom:8px;">+ Create New Scheduled Task (+ 建立新定時排程)</summary>
             <div style="display:flex; flex-direction:column; gap:8px; background:var(--panel-soft); padding:10px; border-radius:6px; border:1px solid var(--line);">
               <input id="sched-name" type="text" placeholder="Schedule Name (e.g. daily-erp-check)" style="padding:6px; border:1px solid var(--line); border-radius:4px;" />
               <input id="sched-cron" type="text" placeholder="Cron Expression (e.g. 0 8 * * * or */5 * * * *)" value="*/5 * * * *" style="padding:6px; border:1px solid var(--line); border-radius:4px; font-family:monospace;" />
@@ -458,19 +499,19 @@
 
         <section id="session-vault-section">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-            <h2 style="margin:0;">Session Vault (Storage State)</h2>
+            <h2 style="margin:0;">Session Vault (Storage State) (工作階段保險箱)</h2>
             <button id="refresh-sessions" class="secondary" style="min-height:30px; font-size:12px; padding:0 8px;">Refresh</button>
           </div>
           <div id="sessions-list" class="muted">Loading stored sessions...</div>
         </section>
 
         <section>
-          <h2>Steps</h2>
+          <h2>Steps (執行步驟)</h2>
           <div id="steps" class="muted">No steps yet.</div>
         </section>
 
         <section>
-          <h2>Evaluation</h2>
+          <h2>Evaluation (執行評估)</h2>
           <pre id="evaluation">{}</pre>
         </section>
       </div>
@@ -868,6 +909,7 @@
           refreshAlerts(),
           refreshScheduledTasks(),
           refreshSessions(),
+          refreshQueues(),
         ]);
         if (btn) {
           btn.textContent = "Refreshed ✓";
@@ -893,6 +935,18 @@
       const isPending = task.status === "pending_approval";
       $("approve").disabled = !isPending;
       $("approve").title = isPending ? "Click to approve this task" : `Cannot approve: task is already ${task.status}`;
+
+      const isExecuting = task.status === "executing";
+      if (isExecuting) {
+        startLiveStream(task.id);
+      } else {
+        stopLiveStream();
+        const pill = $("live-status-pill");
+        if (pill) { pill.className = "status warn"; pill.textContent = "STANDBY"; }
+        const abortBtn = $("btn-abort-task");
+        if (abortBtn) abortBtn.disabled = true;
+      }
+
       renderStatusFlow(task.status);
       renderPlanner(task);
       renderSteps(task.steps || []);
@@ -900,6 +954,7 @@
       refreshReplay();
       refreshTasks();
     }
+
 
     async function registerBuiltInSkills() {
       const skills = [
@@ -1138,8 +1193,9 @@
       container.innerHTML = steps.map((step, idx) => {
         const statusClass = step.status === "completed" ? "pass" : (step.status === "failed" ? "error" : "warn");
         const statusIcon = step.status === "completed" ? "✓" : (step.status === "failed" ? "✗" : "•");
+        const healedBadge = (step.self_healed || step.self_healing) ? `<span class="status pass" style="margin-left:4px; font-size:10px; min-height:18px; padding:1px 5px;" title="Heuristic Self-Healed">⚡ Healed</span>` : "";
         return `<button class="step-tab secondary" data-step-idx="${idx}" style="min-height:30px; padding:2px 10px; font-size:12px; cursor:pointer;">
-          Step ${step.step_no}: ${escapeHtml(step.action_type)} <span class="status ${statusClass}" style="margin-left:4px; font-size:10px; min-height:18px; padding:1px 5px;">${statusIcon}</span>
+          Step ${step.step_no}: ${escapeHtml(step.action_type)} ${healedBadge} <span class="status ${statusClass}" style="margin-left:4px; font-size:10px; min-height:18px; padding:1px 5px;">${statusIcon}</span>
         </button>`;
       }).join("");
 
@@ -1162,13 +1218,24 @@
       const step = currentStepsVisual[idx];
       if (!step) return;
       $("step-viewer-card").style.display = "block";
-      $("step-viewer-title").textContent = `Step ${step.step_no} Details (${step.action_type})`;
+      $("step-viewer-title").textContent = `Step ${step.step_no} Details (步驟 ${step.step_no} 詳情 - ${step.action_type})`;
       $("step-viewer-action").textContent = step.action_type;
       $("step-viewer-target").textContent = step.target || "-";
       setStatus("step-viewer-status", step.status);
       $("step-viewer-duration").textContent = `${step.duration_ms || 0} ms`;
       $("step-viewer-span").textContent = step.span_id || "-";
       $("step-viewer-dom").textContent = step.dom_summary || "-";
+
+      const healingDiv = $("step-viewer-healing");
+      if (healingDiv) {
+        if (step.self_healed || step.self_healing) {
+          const h = step.self_healing || {};
+          healingDiv.innerHTML = `<span class="status pass" style="font-size:11px; padding:1px 6px;">⚡ Self-Healed</span> <span style="font-size:12px; font-family:monospace;">${escapeHtml(h.strategy || "fallback")} &rarr; ${escapeHtml(h.repaired_target || "")}</span>`;
+        } else {
+          healingDiv.textContent = "None (Original selector matched)";
+        }
+      }
+
 
       const previewDiv = $("step-viewer-screenshot");
       if (step.screenshot_url) {
@@ -1555,27 +1622,50 @@
             <tr>
               <th>Session Name</th>
               <th>Cookies Count</th>
+              <th>Encryption</th>
               <th>Backend</th>
               <th>Created</th>
               <th>Status</th>
-              <th>Action</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            ${sessions.map(s => `
-              <tr>
-                <td><strong>${escapeHtml(s.session_name)}</strong></td>
-                <td>${s.cookies_count}</td>
-                <td>${escapeHtml(s.backend)}</td>
-                <td style="font-size:12px;">${escapeHtml(new Date(s.created_at).toLocaleTimeString())}</td>
-                <td><span class="status ${s.status === 'valid' ? 'pass' : 'failed'}">${escapeHtml(s.status)}</span></td>
-                <td>
-                  <button class="secondary" data-revoke-session="${escapeHtml(s.session_name)}" style="min-height:26px; padding:0 8px; font-size:11px;">Revoke</button>
-                </td>
-              </tr>
-            `).join("")}
+            ${sessions.map(s => {
+              const enc = s.encryption || {};
+              const encBadge = enc.encrypted
+                ? `<span class="status pass" style="font-size:10px; min-height:18px; padding:1px 5px;" title="KMS Key: ${escapeHtml(enc.kms_key_id || '')}">KMS (${escapeHtml(enc.algorithm || 'AES-256')})</span>`
+                : `<span class="status warn" style="font-size:10px; min-height:18px; padding:1px 5px;">Plaintext</span>`;
+              return `
+                <tr>
+                  <td><strong>${escapeHtml(s.session_name)}</strong></td>
+                  <td>${s.cookies_count}</td>
+                  <td>${encBadge}</td>
+                  <td>${escapeHtml(s.backend)}</td>
+                  <td style="font-size:12px;">${escapeHtml(new Date(s.created_at).toLocaleTimeString())}</td>
+                  <td><span class="status ${s.status === 'valid' ? 'pass' : 'failed'}">${escapeHtml(s.status)}</span></td>
+                  <td>
+                    <button class="secondary" data-validate-session="${escapeHtml(s.session_name)}" style="min-height:26px; padding:0 8px; font-size:11px; margin-right:4px;">Validate</button>
+                    <button class="secondary" data-revoke-session="${escapeHtml(s.session_name)}" style="min-height:26px; padding:0 8px; font-size:11px;">Revoke</button>
+                  </td>
+                </tr>
+              `;
+            }).join("")}
           </tbody>
         </table>`;
+
+        container.querySelectorAll("button[data-validate-session]").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            btn.disabled = true;
+            try {
+              const res = await getJson(`/v1/sessions/${encodeURIComponent(btn.dataset.validateSession)}/validate`, {method: "POST"}, "operator");
+              alert(`Session [${btn.dataset.validateSession}] Validation:\nValid: ${res.valid}\nCookies: ${res.cookies_count}\nEncryption: ${JSON.stringify(res.encryption)}`);
+            } catch (err) {
+              alert("Validation failed: " + err.message);
+            } finally {
+              btn.disabled = false;
+            }
+          });
+        });
 
         container.querySelectorAll("button[data-revoke-session]").forEach(btn => {
           btn.addEventListener("click", async () => {
@@ -1590,6 +1680,7 @@
             }
           });
         });
+
       } catch (err) {
         if ($("sessions-list")) {
           $("sessions-list").innerHTML = `<span class="error-text">${escapeHtml(err.message)}</span>`;
@@ -1648,14 +1739,129 @@
     $("refresh-alerts").addEventListener("click", refreshAlerts);
     $("test-dispatch-alert").addEventListener("click", testDispatchAlert);
     $("trace-lookup-btn").addEventListener("click", lookupTrace);
+    // --- V1.3 Live Screen Telemetry & WebSocket 直播 ---
+    let currentLiveSocket = null;
+
+    function startLiveStream(taskId) {
+      stopLiveStream();
+      const imgEl = $("live-screen-img");
+      const placeholder = $("live-screen-placeholder");
+      const statusPill = $("live-status-pill");
+      const abortBtn = $("btn-abort-task");
+
+      if (abortBtn) abortBtn.disabled = false;
+      if (statusPill) {
+        statusPill.className = "status pass";
+        statusPill.textContent = "● LIVE STREAMING";
+      }
+
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${protocol}//${window.location.host}/v1/tasks/${taskId}/live-stream`;
+
+      try {
+        currentLiveSocket = new WebSocket(wsUrl);
+        currentLiveSocket.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload.type === "frame" && payload.data) {
+              if (imgEl) {
+                imgEl.src = payload.data;
+                imgEl.style.display = "block";
+              }
+              if (placeholder) placeholder.style.display = "none";
+              if ($("live-stream-step")) $("live-stream-step").textContent = `Step: ${payload.step_no || '-'} (${payload.action || '-'})`;
+              if ($("live-stream-url")) $("live-stream-url").textContent = `URL: ${payload.url || '-'}`;
+            } else if (payload.type === "aborted") {
+              if (statusPill) {
+                statusPill.className = "status failed";
+                statusPill.textContent = "ABORTED";
+              }
+              if (abortBtn) abortBtn.disabled = true;
+              stopLiveStream();
+            }
+          } catch (e) {}
+        };
+        currentLiveSocket.onerror = () => {
+          pollLiveFrame(taskId);
+        };
+      } catch (e) {
+        pollLiveFrame(taskId);
+      }
+    }
+
+    function stopLiveStream() {
+      if (currentLiveSocket) {
+        try { currentLiveSocket.close(); } catch (e) {}
+        currentLiveSocket = null;
+      }
+    }
+
+    async function pollLiveFrame(taskId) {
+      try {
+        const res = await getJson(`/v1/tasks/${taskId}/live-frame`, {}, "operator");
+        if (res.frame_available && res.data) {
+          const imgEl = $("live-screen-img");
+          const placeholder = $("live-screen-placeholder");
+          if (imgEl) {
+            imgEl.src = res.data;
+            imgEl.style.display = "block";
+          }
+          if (placeholder) placeholder.style.display = "none";
+        }
+      } catch (e) {}
+    }
+
+    async function abortCurrentTask() {
+      if (!currentTaskId) return;
+      const btn = $("btn-abort-task");
+      if (btn) btn.disabled = true;
+      try {
+        await getJson(`/v1/tasks/${currentTaskId}/abort`, {method: "POST"}, "operator");
+        alert("Abort signal dispatched to worker. Task will terminate safely.");
+        await refreshTask();
+      } catch (err) {
+        alert("Failed to abort task: " + err.message);
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function refreshQueues() {
+      try {
+        const data = await getJson("/v1/ops/queues", {}, "operator");
+        if ($("queue-multi-priority")) $("queue-multi-priority").textContent = data.multi_priority_enabled ? "Enabled (Weighted)" : "Disabled";
+        if ($("queue-worker-pool")) $("queue-worker-pool").textContent = data.worker_pool || "default";
+        if (data.topics) {
+          if ($("queue-topic-high")) $("queue-topic-high").textContent = data.topics.high || "-";
+          if ($("queue-topic-default")) $("queue-topic-default").textContent = data.topics.default || "-";
+          if ($("queue-topic-batch")) $("queue-topic-batch").textContent = data.topics.batch || "-";
+        }
+      } catch (e) {}
+    }
+
+    async function initiateSsoLogin() {
+      try {
+        const data = await getJson("/v1/auth/oidc/login", {}, null);
+        if (data.auth_url) {
+          window.location.href = data.auth_url;
+        }
+      } catch (e) {
+        alert("OIDC SSO redirect failed: " + e.message);
+      }
+    }
+
     if ($("refresh-schedules")) $("refresh-schedules").addEventListener("click", refreshScheduledTasks);
     if ($("evaluate-schedules-now")) $("evaluate-schedules-now").addEventListener("click", evaluateSchedulesNow);
     if ($("btn-create-schedule")) $("btn-create-schedule").addEventListener("click", createScheduledTask);
     if ($("refresh-sessions")) $("refresh-sessions").addEventListener("click", refreshSessions);
+    if ($("refresh-queues")) $("refresh-queues").addEventListener("click", refreshQueues);
+    if ($("btn-abort-task")) $("btn-abort-task").addEventListener("click", abortCurrentTask);
+    if ($("btn-sso-login")) $("btn-sso-login").addEventListener("click", initiateSsoLogin);
+
     renderScenario();
     renderStatusFlow("idle");
     refreshIdentity();
     refreshAll();
   </script>
+
 </body>
 </html>
