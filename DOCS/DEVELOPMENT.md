@@ -8,7 +8,7 @@ python -m compileall src tests worker alembic
 git diff --check
 ```
 
-目前主要測試（共 18 個測試模組，96 個測試全部通過）：
+目前主要測試（共 20 個測試模組，105 個測試全部通過）：
 
 - `tests/test_v01_operations.py`：Operations Center rendering、artifact serialization、task list API、audit API。
 - `tests/test_v05_auth_rbac.py`：local dev token、RBAC、approval actor、artifact tenant access。
@@ -28,6 +28,9 @@ git diff --check
 - `tests/test_v12_otlp_exporter.py`：非同步背景 Batch Span Exporter、隊列丟棄保護、批次組裝與即時狀態監控。
 - `tests/test_v12_apis.py`：Scheduled Tasks CRUD/Trigger、Session Vault 查詢與撤銷、Video 串流播放、Readiness K8s/OTLP 擴充與 V1.2 UI 渲染。
 - `tests/test_v13_features.py`：KMS 信封加密（Local/AWS/Vault）、AES-256-GCM 租戶 AAD 防篡改、主金鑰輪換、啟發式選擇器自癒（三級 Fallback Cascade、相似度比對與低信心度拒絕）、多優先權加權佇列分流（High/Queued/Batch）、WebSocket 即時畫面幀推播、線上 Abort 攔截、OIDC PKCE 授權碼交換與 HttpOnly Cookie、Session 解密校驗 API、Helm 3 Chart 結構與全向後相容。
+- `tests/test_v14_features.py`：跨瀏覽器引擎矩陣派發（Chromium/Firefox/WebKit）、雙向即時遠端接管（HITL 暫停/下發點擊與文字/恢復推進/耗時審計）、Zero-Trust DLP 動態 CSS 高斯模糊遮罩與正則脫敏、多叢集排程同盟心跳/Leader Election/超時容災晉升、V1.4 API 端點整合與 RBAC 權限、Operations Center V1.4 UI 渲染驗證。
+- `tests/test_v14_playwright_e2e.py`：真實 Playwright Chromium 瀏覽器端到端測試，驗證 /operations 頁面渲染、V1.4 徽章、引擎切換、HITL 控制項防呆鎖定與模擬輸入、三大面板顯示，並成功截圖存證至 `tests/artifacts/v14_operations_playwright_test.png`。
+
 
 ## Docker
 

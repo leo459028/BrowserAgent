@@ -84,12 +84,15 @@ flowchart TB
     TaskRunner --> TraceBuf
 ```
 
-![BrowserAgent Architecture V1.3 Chinese](./assets/browseragent-architecture-v1.3ch.png)
+![BrowserAgent Architecture V1.4 Chinese](./assets/browseragent-architecture-v1.4ch.png)
+![BrowserAgent Architecture V1.4 English](./assets/browseragent-architecture-v1.4en.png)
 
 Architecture image assets:
 
-- V1.3 當前繁體中文架構圖：`DOCS/assets/browseragent-architecture-v1.3ch.png`
-- V1.3 當前全英文架構圖：`DOCS/assets/browseragent-architecture-v1.3en.png`
+- V1.4 當前繁體中文架構圖：`DOCS/assets/browseragent-architecture-v1.4ch.png`
+- V1.4 當前全英文架構圖：`DOCS/assets/browseragent-architecture-v1.4en.png`
+- V1.3 歷史繁中架構圖（保留封存）：`DOCS/assets/browseragent-architecture-v1.3ch.png`
+- V1.3 歷史全英架構圖（保留封存）：`DOCS/assets/browseragent-architecture-v1.3en.png`
 - V1.2 歷史繁中架構圖（保留封存）：`DOCS/assets/browseragent-architecture-v1.2ch.png`
 - V1.2 歷史全英架構圖（保留封存）：`DOCS/assets/browseragent-architecture-v1.2en.png`
 - V1.1 歷史繁中架構圖（保留封存）：`DOCS/assets/browseragent-architecture-v1.1ch.png`
@@ -106,17 +109,20 @@ Architecture image assets:
 | OTLP Exporter | `src/browser_agent/tracing/exporter.py` | 背景非同步批次推送 Spans 至 OTLP HTTP/JSON 收集器（Jaeger/Datadog） |
 | Alerting & Webhooks | `src/browser_agent/alerts/` | 7 大維運規則即時評估、外部 Webhook（Slack/Discord）非阻塞式轉發 |
 | Scheduler Engine | `src/browser_agent/services/scheduler.py` | 標準 5 欄位 Cron 解析、Redis 分散式搶鎖（TTL 55s）、任務防重入派發 |
+| Federation Manager | `src/browser_agent/services/federation.py` | 多叢集排程節點心跳註冊、分散式租約維護、Leader Election 與容災接管 |
+| Zero-Trust DLP | `src/browser_agent/services/dlp.py` | 敏感 DOM 像素動態模糊遮罩、Bearer Token / API Key 正則過濾與遞迴脫敏 |
 | KMS Crypto | `src/browser_agent/crypto/kms.py` | 信封加密、Local/AWS/Vault 驅動、DEK 輪換、AES-256-GCM 與 AAD 隔離 |
 | Self-Healing Engine | `src/browser_agent/services/self_healing.py` | 啟發式 DOM 相似度比對、Fallback Cascade 備援選擇器解析與自癒標記 |
-| Live Telemetry | `src/browser_agent/services/live_telemetry.py` | WebSocket 即時畫面廣播發布訂閱佇列、線上 Abort 狀態管理 |
-| Operations API | `src/browser_agent/api.py` | readiness、alerts、traces、task、scheduled task、session、video、live stream、abort、queues endpoints |
-| Operations UI | `src/browser_agent/templates/operations.html` | `/operations` 入口，含 SSO 登入、Live Stream 卡片、KMS 狀態、Queues 監控、自癒標記 |
+| Live Telemetry & HITL | `src/browser_agent/services/live_telemetry.py` | 即時畫面廣播、線上 Abort、雙向遠端接管（Pause/Interact/Resume）指令調度 |
+| Operations API | `src/browser_agent/api.py` | readiness、alerts、traces、task、scheduled task、session、video、live stream、abort、queues、HITL、matrix、DLP、federation endpoints |
+| Operations UI | `src/browser_agent/templates/operations.html` | `/operations` 入口，含 SSO 登入、Live Stream 卡片、KMS 狀態、Queues 監控、自癒標記、雙向接管條、矩陣比較面板、DLP 狀態、同盟拓撲 |
 | Reliability | `src/browser_agent/reliability.py` | rate limit、task lock、scheduler lock、store status |
 | Artifact Store | `src/browser_agent/storage.py` | local 與 S3 artifact backend，支援 screenshot、html、video (webm)、storage_state (json) |
-| Browser Runner | `src/browser_agent/services/browser.py` | Playwright 自動化、Live 畫面廣播、Abort 中斷攔截、自癒探測與錄影提取 |
+| Browser Runner | `src/browser_agent/services/browser.py` | 多內核啟動（Chromium/Firefox/WebKit）、DLP 遮罩脫敏、反向接管指令注入、Live 畫面廣播、Abort 中斷攔截、自癒探測與錄影提取 |
 | Worker Consumer | `worker/consumer.py`, `worker/runner.py` | 多優先權主題消費（High/Queued/Batch）、資源池隔離、W3C Context 傳播 |
-| TaskRunner | `src/browser_agent/runner.py` | KMS Session 解密載入、Planner、SkillHub、自癒審計、video 註冊、Evaluation |
-| K8s, Helm & GitOps | `deploy/k8s/`, `deploy/helm/`, `deploy/gitops/` | 生產級 Kubernetes 套件、Helm 3 Chart 與 ArgoCD 自動化交付藍圖 |
+| TaskRunner | `src/browser_agent/runner.py` | KMS Session 解密載入、Planner、SkillHub、自癒審計、video 註冊、DLP 標記、人機介入審計、Evaluation |
+| K8s, Helm & GitOps | `deploy/k8s/`, `deploy/helm/`, `deploy/gitops/` | 生產級 Kubernetes 套件、Helm 3 Chart（1.4.0）與 ArgoCD 自動化交付藍圖 |
+
 
 ## Auth & OIDC SSO Flow
 
@@ -211,3 +217,40 @@ Architecture image assets:
 3. 單筆或 bulk replay 會把 task 回到 `queued`。
 4. Quarantine 會把 DLQ status 設為 `quarantined`，bulk replay 預設跳過。
 5. `GET /v1/tasks/{task_id}/replay` 回傳視覺化步驟分頁（Visual Step Replay）與向後相容的事件時間線，支援點選步驟即時預覽截圖縮圖、DOM 摘要、執行耗時、WebM 全行程視訊串流與對應的 Span ID。
+
+## Bidirectional Remote Takeover (HITL) Control Flow
+
+1. 監控人員於 Operations Center 觀看即時畫面串流時，若遇到 CAPTCHA 或雙因素驗證，點擊 `Pause Task (Takeover)`。
+2. Control Plane 接收請求（`POST /v1/tasks/{id}/pause`），將暫停旗標與操作者資訊存入 `LiveTelemetryBroadcaster`，並通知當前 Worker 暫停推進。
+3. Worker 在迴圈中每 100ms 檢查一次狀態，進入暫停等待並不斷消費由 Control Plane 轉發的反向操作隊列（`action: click / type / press`）。
+4. 操作人員在前端畫布點擊或在按鍵輸入框輸入文字，透過 `POST /v1/tasks/{id}/interact` 下發動作；Worker 取出動作並直接調用 Playwright 頁面實體注入操作（`page.mouse.click()` 或 `page.keyboard.type()`）。
+5. 人工操作完成後，維運人員點擊 `Resume Task`（`POST /v1/tasks/{id}/resume`）；Worker 退出暫停迴圈，紀錄總介入耗時與操作者身分至 `task.human_intervened = True` 與 Audit Log，恢復自動化推進。
+
+## Cross-Browser Matrix Execution Flow
+
+1. 建立任務時可指定單一核心（`browser_engine: chromium / firefox / webkit`），或呼叫 `POST /v1/tasks/matrix` 一鍵派發矩陣。
+2. Matrix 派發器產生統一之 `matrix_id`，並針對每種指定之瀏覽器核心生成一個獨立的 Task 實體，存入資料庫並發布至佇列。
+3. Worker 節點收到任務後，檢驗 `task.browser_engine`：
+   - 啟動對應之 Playwright 實體：`playwright.chromium`、`playwright.firefox` 或 `playwright.webkit`。
+   - 各核心採用獨立的 Browser Context，確保 Cookie、Session 與 User-Agent 隔離。
+4. 任務完成後，各自記錄執行耗時、評估 Verdict、截圖與錄影 Artifact。
+5. Operations Center 呼叫 `GET /v1/tasks/matrix/{matrix_id}` 聚合比對跨引擎差異，列出渲染差異、DOM 自癒表現與執行耗時。
+
+## Zero-Trust Dynamic DLP & Visual Masking Pipeline
+
+1. **DOM 像素動態模糊遮罩**：
+   - 當頁面載入或執行動作前，`ZeroTrustDLPService` 自動向 Playwright 頁面動態注入 CSS 防護樣式：針對 `input[type="password"]`、機密識別選擇器等動態疊加 `filter: blur(8px)` 高斯模糊。
+   - 任何由 WebSocket 即時廣播串流截取之畫面幀、截圖 Artifact 或 WebM 視訊錄製，機密欄位在源頭即為模糊像素，無明文洩漏風險。
+2. **文字正則動態脫敏**：
+   - 系統即時監控所有文字串流，比對 Bearer Token、JWT、API Key（OpenAI / AWS / Private Keys）等正則特徵，動態替換為 `[REDACTED_TOKEN]` 或 `sk-[REDACTED_KEY]`。
+3. **Metadata 遞迴過濾**：
+   - 在任務 Metadata、步驟輸入輸出與 Audit Logs 寫入資料庫或對外回傳前，遞迴過濾所有包含 `password`、`token`、`secret`、`authorization` 等機密鍵值，確保資料庫與 APM Spans 零敏感資訊殘留。
+
+## Multi-Cluster Scheduling Federation & DR Failover Flow
+
+1. 各叢集排程節點在啟動時自動產生或指派 `node_id` 與所屬 `region`（如 `ap-northeast-1`）。
+2. 背景調度器每 5 秒向同盟註冊中心（Redis 或 Central DB）發送心跳（`POST /v1/ops/federation/heartbeat`），並更新存活時間戳。
+3. 排程主導權（Leader Lease）採分散式搶佔租約（TTL 15 秒）：
+   - 只有持有有效租約之 Leader 節點才會觸發 Cron 表達式解析與任務派發。
+   - 若 Leader 節點心跳超過租約時間未更新，備援節點在下次心跳週期自動晉升為新 Leader，無縫接管未完成之定時巡檢。
+4. 維運管理員可隨時透過 Operations Center 檢視節點拓撲（`GET /v1/ops/federation/nodes`），或由管理員呼叫 `POST /v1/ops/federation/re-election` 強制轉移主導權進行維護演練。

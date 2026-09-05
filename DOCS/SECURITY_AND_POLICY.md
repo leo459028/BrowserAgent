@@ -2,7 +2,7 @@
 
 ## Auth/RBAC
 
-V1.3 支援多元且嚴密的企業級認證模式：
+V1.4 支援多元且嚴密的企業級認證模式：
 
 - `AUTH_MODE=local`：使用 `/v1/auth/local-token` 產生 local dev HS256 token（僅限本機開發與測試）。
 - `AUTH_MODE=jwks`：使用 `AUTH_JWKS_URL` 驗證 RS256/JWKS token；若未設定 `AUTH_JWKS_URL`，可用 `AUTH_OIDC_ISSUER_URL` discovery 取得 `jwks_uri`。
@@ -12,12 +12,41 @@ V1.3 支援多元且嚴密的企業級認證模式：
   - 隨機生成防偽 `state`，有效防範跨站請求偽造（CSRF）。
   - 授權成功後簽發之會話封裝於 **HttpOnly、SameSite 嚴格模式** 之安全 Cookie（`ba_session`），防範 XSS 竊取憑證。
 
-Roles：
+Roles 權限矩陣：
 
-- `creator`：建立 task、讀 task/artifact、建立/修改 scheduled task。
+- `creator`：建立 task、讀 task/artifact、建立/修改 scheduled task、**一鍵派發跨瀏覽器矩陣任務（`POST /v1/tasks/matrix`）**。
 - `approver`：讀 task/audit/artifact、approve task。
-- `operator`：讀 task/audit/artifact/metrics、readiness、alerts、traces、DLQ operations、觸發排程、驗證 Session、線上中止任務（Abort）。
-- `admin`：全部權限（含 alerts test-dispatch、Skill 註冊、一鍵強制撤銷 Session、排空 OTLP 等敏感操作）。
+- `operator`：讀 task/audit/artifact/metrics、readiness、alerts、traces、DLQ operations、觸發排程、驗證 Session、線上中止任務（Abort）、**執行雙向即時接管（Pause/Interact/Resume）、檢視 DLP 狀態與同盟拓撲**。
+- `admin`：全部權限（含 alerts test-dispatch、Skill 註冊、一鍵強制撤銷 Session、排空 OTLP、**多叢集同盟強制重選 Leader（`POST /v1/ops/federation/re-election`）** 等敏感操作）。
+
+## Zero-Trust 動態資料防洩與像素遮罩（Zero-Trust DLP Security & Visual Masking）
+
+為落實端到端零信任資料保護，V1.4 引入多層防洩機制：
+1. **源頭動態 CSS 像素遮罩**：
+   - 在 Playwright 初始化與頁面動態導航時，自動向頁面注入 CSS 模糊防護：針對 `input[type="password"]`、機密識別選擇器等動態疊加 `filter: blur(8px) !important` 高斯模糊。
+   - 所有即時畫面廣播（WebSocket Live Stream）、全行程視訊錄影（WebM Video）與截圖 Artifact，敏感欄位在物理像素層次即被模糊遮蔽，即使錄影遭外洩亦無法還原原始密碼。
+2. **文字正則動態脫敏**：
+   - 系統即時監控所有字串與日誌輸出，比對 Bearer Token、JWT、API Key（OpenAI / AWS / Private Keys）等正則特徵，動態替換為 `[REDACTED_TOKEN]` 或 `sk-[REDACTED_KEY]`。
+3. **Metadata 遞迴過濾**：
+   - 在任務 Metadata、步驟輸入輸出與 Audit Logs 寫入資料庫或對外回傳前，遞迴過濾所有包含 `password`、`token`、`secret`、`authorization` 等機密鍵值，確保資料庫與 APM Spans 零敏感資訊殘留。
+
+## 雙向反向操作通道安全治理（Bidirectional HITL Control Channel Governance）
+
+1. **同租戶隔離**：`POST /v1/tasks/{id}/pause`、`/interact`、`/resume` 端點均強制校驗 Token 租戶與任務租戶是否嚴格相符，嚴禁跨租戶注入操作指令。
+2. **動作安全邊界校驗**：
+   - 僅允許合法的指令型別（`click`、`type`、`press`）。
+   - 滑鼠座標強制校驗是否落在可視視窗內（非負浮點數），避免非預期越界溢位。
+   - 鍵盤文字輸入經 DLP 正則掃描與消毒，避免注入惡意腳本。
+3. **超時自動防呆防護**：
+   - 人工暫停狀態具備最大超時上限（`HITL_PAUSE_TIMEOUT_SECONDS`，預設 600 秒）。若維運人員暫停後未在時限內恢復，系統將自動強制退出暫停狀態並記錄異常超時。
+4. **完整且不可抵賴之審計軌跡**：
+   - 每次介入均詳實記錄操作者帳號、IP、介入起訖時間戳、總介入耗時與執行動作數至 `task.human_intervened = True` 與 Audit Log。
+
+## 多叢集同盟與分散式排程安全（Multi-Cluster Federation Governance）
+
+1. **租約式互斥搶鎖**：Leader 節點必須定時刷新 Redis 分散式租約（TTL 15 秒），租約過期則自動喪失派發權，杜絕因網路延遲造成的雙主腦裂（Split-Brain）。
+2. **強制重選權限控管**：`POST /v1/ops/federation/re-election` 強制限 `admin` 角色，防範任意操作員擅自中斷叢集排程。
+3. **區域隔離**：各同盟節點記錄所屬 `region`，支援在地合規政策與資料不出境要求。
 
 ## Policy
 
@@ -76,5 +105,5 @@ Artifact content endpoint 必須通過 tenant check。Local backend 會檢查 pa
 - Production 不應使用預設 `APP_SECRET_KEY`。
 - Production 若仍開啟 local dev token，`/v1/ops/readiness` 會回 `not_ready`。
 - Production 若使用預設 `APP_SECRET_KEY`、未設定 JWKS/OIDC、未設定 Kafka、未使用 Redis reliability store 或未使用 S3 artifact backend，`/v1/ops/readiness` 也會回 `not_ready`。
-- V1.3 原生內建 Enterprise OIDC PKCE Code Flow 與 Session Vault KMS 信封加密，可直接對接企業級 IdP（Keycloak、Okta、Azure AD）與雲端金鑰管理服務（AWS KMS、HashiCorp Vault）。
+- V1.4 原生內建 Enterprise OIDC PKCE Code Flow、Session Vault KMS 信封加密與 Zero-Trust 動態資料防洩機制，可直接對接企業級 IdP（Keycloak、Okta、Azure AD）與雲端金鑰管理服務（AWS KMS、HashiCorp Vault）。
 - 部署於 Kubernetes 或 Helm 時，強烈建議將敏感參數（如密鑰、S3 憑證、DB 密碼）抽離至 Kubernetes Secrets，並透過雲端 KMS 加密。

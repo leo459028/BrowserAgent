@@ -174,3 +174,35 @@
 1. SRE 團隊使用 `deploy/helm/browser-agent/` 將 BrowserAgent 部署至 Kubernetes 叢集，並透過 `values.yaml` 自訂 KMS、OIDC 與 Worker 資源池配置。
 2. 配置 `deploy/gitops/argocd-application.yaml` 連結 Git 倉庫。
 3. ArgoCD 監聽 Git 變更，自動執行聲明式同步與漂移自我修復（Self-Healing），實現現代化企業級 GitOps 交付。
+
+## Use Case：遇到 CAPTCHA 驗證碼的雙向即時遠端接管（HITL Takeover）
+
+1. 某銀行供應商後台登入流程中突然觸發 Cloudflare Turnstile 驗證碼或手機簡訊 OTP。
+2. 監控人員在 Operations Center 透過 WebSocket 即時串流察覺瀏覽器停留在驗證碼頁面，點擊 **`Pause (Takeover)`** 按鈕（呼叫 `POST /v1/tasks/{id}/pause`）。
+3. Worker 進入暫停等待狀態，畫面標籤轉為橘色 `PAUSED (TAKEOVER)`。
+4. 維運人員直接在網頁畫布上點選驗證碼核取方塊（觸發 `action: click`），並在輸入框填寫手機簡訊驗證碼點擊 `Send Keys`（觸發 `action: type`）。
+5. 驗證通過並成功登入後，維運人員點選 **`Resume Task`** 按鈕（呼叫 `POST /v1/tasks/{id}/resume`）。
+6. Worker 自動脫離暫停狀態繼續推進後續爬蟲與截圖任務，並將人機介入操作歷程完整留存於 Audit Log 與任務 Metadata 中，避免整個流程直接失敗中斷。
+
+## Use Case：跨瀏覽器核心（Chromium / Firefox / WebKit）矩陣相容性驗證
+
+1. 電商前端團隊推出新版結帳流程，需要驗證在三大瀏覽器核心下的排版渲染與 JavaScript 相容性。
+2. 開發人員在 Operations Center 點選 **`Dispatch Matrix (3 Engines)`** 按鈕（呼叫 `POST /v1/tasks/matrix`）。
+3. 系統自動平行生成 3 個 Task，分別指派給 Chromium、Firefox 與 WebKit 內核執行。
+4. Worker 資源池獨立啟動三種瀏覽器執行相同的購物車與結帳指示。
+5. 執行完成後，團隊在 **`Cross-Browser Matrix Comparison`** 面板一覽聚合報告：比對三大核心之總耗時、Verdict 評估結果、DOM 自癒情形與截圖產物，快速揪出 WebKit 特有的排版跑版問題。
+
+## Use Case：Zero-Trust 動態高斯模糊遮罩與機密 Token 防洩
+
+1. 某營運任務需要填寫使用者帳號密碼與 API 金鑰以執行外部系統查詢。
+2. 啟用了 Zero-Trust DLP 防護後，系統在瀏覽器 DOM 渲染時自動為 `input[type="password"]` 注入動態 CSS 高斯模糊遮罩（`filter: blur(8px)`）。
+3. 任何透過 WebSocket 即時推播之畫面幀、截圖 Artifact 或 WebM 視訊錄影，在影像源頭即已模糊不可辨識，即使錄影檔被外部非授權人員存取，亦無法窺探真實密碼。
+4. 同時，任務執行過程中產生的日誌與 Metadata 中的 Authorization Bearer Token 和 sk-... API Keys 自動被替換為 `[REDACTED_TOKEN]`，杜絕敏感資料外洩至 APM 或資料庫。
+
+## Use Case：多叢集排程同盟跨區域 Leader 自動切換與容災接管
+
+1. 企業在東京區域（`ap-northeast-1`）與大阪區域（`ap-northeast-3`）部署了兩個獨立的 BrowserAgent 叢集，共同維護全球業務排程。
+2. 東京節點作為同盟中的 Primary Leader，每 5 秒向同盟發送心跳以維持排程租約（Lease TTL 15 秒），並負責派發 Cron 巡檢。
+3. 當東京機房發生電力中斷或主機離線，其心跳逾期停止刷新。
+4. 大阪備援節點在偵測到 Leader 租約過期後，自動依優先權晉升為新 Leader，無縫接管所有定時巡檢派發工作，全程無需人工介入，保證業務零中斷。
+5. 系統管理者亦可隨時在 Operations Center 點擊 **`Force Re-election`** 進行災備演練或例行維護的主從切換。
