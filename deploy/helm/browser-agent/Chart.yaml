@@ -1,0 +1,15 @@
+apiVersion: v2
+name: browser-agent
+description: Enterprise Browser Automation Agent with Session Vault, Heuristic Self-Healing, and Full Observability
+type: application
+version: 1.3.0
+appVersion: "1.3.0"
+keywords:
+  - browser-automation
+  - playwright
+  - agentic-ai
+  - session-vault
+  - keda
+maintainers:
+  - name: BrowserAgent Team
+    email: ops@example.com

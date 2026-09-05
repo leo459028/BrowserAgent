@@ -1,0 +1,26 @@
+{{- if .Values.keda.enabled -}}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "browser-agent.fullname" . }}-worker-scaler
+  labels:
+    {{- include "browser-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "browser-agent.fullname" . }}-worker
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  minReplicaCount: {{ .Values.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.keda.maxReplicaCount }}
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: {{ .Values.secrets.kafkaBootstrapServers }}
+        consumerGroup: browser-agent-worker-{{ .Values.config.workerPool }}
+        topic: {{ .Values.config.queueDefaultTopic }}
+        lagThreshold: {{ .Values.keda.kafkaLagThreshold | quote }}
+        activationLagThreshold: "1"
+{{- end }}

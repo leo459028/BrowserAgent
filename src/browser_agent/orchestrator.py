@@ -170,11 +170,37 @@ class Orchestrator:
             },
         )
         self.session.flush()
-        self.bus.publish("agent.tasks.queued", str(task.id), {
+        from .config import get_settings
+
+        settings = get_settings()
+
+        # V1.3 優先權佇列路由（priority > 0 走 high，priority < 0 走 batch，priority == 0 走預設 queued）
+        task_priority = getattr(task, "priority", 0) or 0
+        topic = settings.queue_default_topic
+        if getattr(settings, "multi_priority_enabled", True):
+            if task_priority > 0:
+                topic = getattr(settings, "queue_high_topic", "agent.tasks.high")
+            elif task_priority < 0:
+                topic = getattr(settings, "queue_batch_topic", "agent.tasks.batch")
+
+
+        task_meta = getattr(task, "metadata_", {}) or {}
+        if isinstance(task_meta, dict):
+            task.metadata_ = {
+                **task_meta,
+                "queue_topic": topic,
+                "priority": task_priority,
+            }
+        self.session.add(task)
+        self.session.flush()
+
+        self.bus.publish(topic, str(task.id), {
             "event_id": str(uuid.uuid4()),
             "event_type": "task.queued",
             "task_id": str(task.id),
             "tenant_id": str(task.tenant_id),
+            "priority": task_priority,
+            "queue_topic": topic,
             "approved_by": approved_by_label,
             "note": note,
             "correlation_id": getattr(task, "correlation_id", None),

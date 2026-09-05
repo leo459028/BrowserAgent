@@ -26,6 +26,8 @@ LOCAL_DEV_USERS = [
 TOPICS = [
     "agent.tasks.created",
     "agent.tasks.queued",
+    "agent.tasks.high",
+    "agent.tasks.batch",
     "agent.tasks.failed",
     "agent.tasks.completed",
     "agent.tasks.dlq",

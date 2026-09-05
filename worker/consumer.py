@@ -21,7 +21,21 @@ logger = logging.getLogger(__name__)
 def main():
     settings = get_settings()
     bus = get_bus(settings.kafka_bootstrap_servers)
-    consumer = bus.consumer("browser-agent-worker", ["agent.tasks.queued"])
+
+    # V1.3 優先權佇列與 Worker 資源池配置
+    pool_type = getattr(settings, "worker_pool", "default").lower()
+    if getattr(settings, "multi_priority_enabled", True):
+        if pool_type == "high-only":
+            topics = [settings.queue_high_topic]
+        elif pool_type == "batch-only":
+            topics = [settings.queue_batch_topic]
+        else:
+            topics = [settings.queue_high_topic, settings.queue_default_topic, settings.queue_batch_topic]
+    else:
+        topics = ["agent.tasks.queued"]
+
+    consumer = bus.consumer(f"browser-agent-worker-{pool_type}", topics)
+
 
     while True:
         msg = consumer.poll(1.0)

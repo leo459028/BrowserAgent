@@ -28,13 +28,28 @@ Request：
 
 ### `GET /v1/auth/me`
 
-回傳目前 token actor 與 permissions。`AUTH_MODE=local` 使用 HS256 local dev token；`AUTH_MODE=jwks` 使用 `AUTH_JWKS_URL` 驗證 RS256/JWKS token。若沒有設定 `AUTH_JWKS_URL`，但有 `AUTH_OIDC_ISSUER_URL`，V1.1 會讀取 OIDC discovery 的 `jwks_uri`。
+回傳目前 token actor 與 permissions。`AUTH_MODE=local` 使用 HS256 local dev token；`AUTH_MODE=jwks` 使用 `AUTH_JWKS_URL` 驗證 RS256/JWKS token。若沒有設定 `AUTH_JWKS_URL`，但有 `AUTH_OIDC_ISSUER_URL`，會讀取 OIDC discovery 的 `jwks_uri`。支援從 `Authorization: Bearer <token>` 或 HttpOnly `ba_session` Cookie 認證。
+
+### `GET /v1/auth/oidc/login`
+
+公開端點。發起 Enterprise OIDC Authorization Code Flow SSO 登入流程：
+- 自動生成高強度隨機 PKCE `code_verifier` 與 SHA-256 `code_challenge`。
+- 自動生成防偽 `state`，並將 PKCE 憑證暫存於後端快取。
+- 回傳 HTTP 307 臨時重新導向至外部 IdP 授權端點（`AUTH_OIDC_ISSUER_URL/protocol/openid-connect/auth`）。
+
+### `GET /v1/auth/oidc/callback`
+
+公開端點。接收 IdP 授權重定向回傳之 `code` 與 `state`：
+- 校驗 `state` 防範跨站請求偽造（CSRF）。
+- 檢索對應的 `code_verifier`，向 IdP Token 端點以 PKCE 交換 `id_token` 與 `access_token`。
+- 驗證 JWT 簽名與 Claim，登入成功後簽發 HttpOnly、SameSite 嚴格模式之安全 Cookie（`ba_session`）。
+- 寫入 `auth.oidc_callback_success` 審計日誌，並重定向回 `/operations`。
 
 ## Operations
 
 ### `GET /operations`
 
-回傳 `Browser Agent v1.1 Operations Center`。可用來建立 task、核准、查 Operations Readiness、Production Readiness、Observability、Production Alerting、Trace Inspector、Visual Step Replay、Reliability/DLQ、bulk replay、quarantine、metrics、audit、Planner/SkillHub、artifact preview/access。
+回傳 `Browser Agent Operations Center`（V1.3）。可用來建立 task、核准、查 Operations Readiness、Production Readiness、Observability、Production Alerting、Trace Inspector、Visual Step Replay、Live Stream 即時畫面、Session Vault、KMS 信封加密狀態、優先佇列監控、Reliability/DLQ、bulk replay、quarantine、metrics、audit、Planner/SkillHub、artifact preview/access。
 
 系統支援自動容錯重定向：
 - `GET /` ➜ 307 臨時重定向至 `/operations`
@@ -44,7 +59,7 @@ Request：
 
 需要 `operator` 或 `admin`。回傳 app version、auth mode、local token 狀態、DB readiness、reliability store、Kafka config、artifact backend、worker identity、DLQ topic、Production Readiness、Observability 與 warnings。
 
-V1.1 新增欄位：
+包含欄位：
 
 - `production.status`：`ready`、`degraded` 或 `not_ready`。
 - `production.checks`：檢查 production local token、secret key、JWKS/OIDC、Redis reliability、Kafka、S3 artifact backend。
@@ -54,6 +69,22 @@ V1.1 新增欄位：
 - `otlp`：包含 `enabled`、`endpoint`、`queue_size`、`dropped_spans`、`exported_spans`。
 
 Production hard failure 會讓整體 `status` 回 `not_ready`。
+
+### `GET /v1/ops/kms/status`
+
+需要 `operator` 或 `admin`。查詢 Session Vault 企業級 KMS 信封加密引擎的運行狀態與健康指標：
+- `status`：`healthy` 或 `degraded`。
+- `provider`：當前驅動類型（`local`、`aws_kms`、`vault`）。
+- `key_id`：使用中之主金鑰識別碼（例如 `session-vault-v1`）。
+- `algorithm`：`AES-256-GCM`。
+- `test_encryption`：`{"ok": true, "roundtrip_ms": float}` 即時加解密迴路驗證。
+
+### `GET /v1/ops/queues`
+
+需要 `operator` 或 `admin`。查詢多優先權加權佇列（High / Queued / Batch）與 Worker 資源池隔離分流狀態：
+- `queues`：各優先等級主題（`agent.tasks.high`, `agent.tasks.queued`, `agent.tasks.batch`）之即時深度與優先權定義。
+- `worker_pool`：當前 Worker 資源池名稱（`default`, `high-priority`, `batch-pool`）及其訂閱之主題清單。
+- `metrics`：包含 `high_priority_routed`、`normal_priority_routed`、`batch_priority_routed`。
 
 ### `GET /v1/ops/alerts`
 
@@ -144,6 +175,30 @@ V1.2 每個 response 會回寫 `X-Correlation-ID`。若 request 帶入 `X-Correl
 
 需要 authenticated actor。取得該任務全行程瀏覽器 WebM 錄影視訊串流，以 `video/webm` 二進位串流回傳，支援串流播放。
 
+### `WS /v1/tasks/{task_id}/live-stream`
+
+需要 authenticated actor。提供即時雙向/單向低延遲瀏覽器畫面廣播 WebSocket 串流：
+- 連線建立後，系統以設定之幀率（預設 2 FPS）非同步推送當前瀏覽器視窗最新 JPEG 畫面幀（Base64 編碼），格式為 `{"type": "frame", "frame_id": int, "timestamp": str, "data": "data:image/jpeg;base64,..."}`。
+- 當任務步驟轉換或自癒發生時，推播事件通知 `{"type": "event", "event": "step_started", ...}`。
+- 支援客戶端發送 `ping` 保活，伺服器回傳 `pong`。
+- 任務結束或中斷時，推播 `{"type": "task_finished", "status": "completed|failed|aborted"}` 並優雅關閉連線。
+
+### `POST /v1/tasks/{task_id}/abort`
+
+需要 `operator` 或 `admin`。即時線上中止執行中之任務：
+- 即刻標記任務 Abort 信號，Worker 瀏覽器執行迴圈於下一步驟前偵測並立即中斷。
+- 安全關閉 Playwright Page 與 Context 資源，避免孤兒行程或記憶體洩漏。
+- 任務狀態躍遷為 `aborted`，寫入 `task.aborted` 審計日誌與 Evaluation 判定。
+- 回傳：
+```json
+{
+  "aborted": true,
+  "task_id": "00000000-0000-0000-0000-000000000201",
+  "status": "aborted",
+  "aborted_by": "operator@example.com"
+}
+```
+
 ## Scheduled Tasks（排程調度引擎）
 
 ### `POST /v1/scheduled-tasks`
@@ -215,9 +270,30 @@ V1.2 每個 response 會回寫 `X-Correlation-ID`。若 request 帶入 `X-Correl
     "created_at": "2026-09-05T08:00:00Z",
     "uri": "s3://browser-agent/2026/09/05/.../storage_state.json",
     "backend": "s3",
-    "status": "valid"
+    "status": "valid",
+    "encrypted": true,
+    "kms_provider": "local",
+    "key_id": "session-vault-v1"
   }
 ]
+```
+
+### `GET /v1/sessions/{session_name}/validate`
+
+需要 `operator` 或 `admin`。完整性檢驗指定 `session_name` 之最新憑證：
+- 透過 KMS 引擎即時執行解密迴路，校驗 AES-256-GCM 標籤與租戶 AAD。
+- 解析 JSON Payload 並統計 Cookies 與 LocalStorage 鍵值數。
+- 回傳：
+```json
+{
+  "session_name": "portal_admin_session",
+  "valid": true,
+  "encrypted": true,
+  "kms_provider": "local",
+  "cookies_count": 5,
+  "origins_count": 1,
+  "status": "valid"
+}
 ```
 
 ### `DELETE /v1/sessions/{session_name}`

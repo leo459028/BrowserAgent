@@ -132,3 +132,45 @@
 2. KEDA ScaledObject 持續監聽 Kafka 佇列 `agent.tasks.queued` 之 consumer group lag。
 3. 當大量定時巡檢同時觸發導致任務積壓時，KEDA 自動觸發 HPA 將 Worker Pod 副本數從 1 自動水平擴展至多達 10 個 Pod。
 4. 任務排空後，Worker 叢集自動縮容至基準副本數，節省企業運算資源。
+
+## Use Case：Enterprise OIDC SSO 一鍵登入與安全會話保持
+
+1. 維運人員開啟 `/operations`，點選頂部 `SSO Login (OIDC)` 按鈕。
+2. 瀏覽器發起 `GET /v1/auth/oidc/login`，攜帶 PKCE `code_challenge` 與隨機 `state` 導向企業 IdP（Keycloak/Okta）。
+3. 使用者完成身份認證後，導回 `GET /v1/auth/oidc/callback`。
+4. 系統交換授權碼並驗證簽名，自動寫入 HttpOnly、SameSite Strict 之 `ba_session` 安全 Cookie。
+5. 維運人員無需在瀏覽器手動輸入或保管明文 Bearer Token，後續所有 UI 操作均自動由 Cookie 鑑權。
+
+## Use Case：Session Vault KMS 信封加密與金鑰輪換完整性驗證
+
+1. 登入任務產出的 Storage State 在寫入前，自動經由 KMS 信封加密（Local / AWS KMS / Vault）以 AES-256-GCM 加密，並以 `tenant_id` 作為 AAD 綁定。
+2. 維運人員在 `Session Vault` 卡片點選 `Validate` 按鈕或呼叫 `GET /v1/sessions/{name}/validate`。
+3. 系統即時執行解密迴路校驗，驗證 GCM 標籤完整性與金鑰匹配性，並回報有效 Cookies 數量。
+4. 當安全政策要求更換主金鑰時，系統支援以新金鑰重新加密 DEK，舊有 Storage State 無需全部重新登入即可相容解密。
+
+## Use Case：多優先權加權佇列分流與急件保障
+
+1. 維運人員建立高風險線上突發告警排查任務，設定 `priority: 5`（急件）。
+2. Orchestrator 自動將其路由至 `agent.tasks.high` 高優先權主題。
+3. 專屬配置之 High-Priority Worker Pool 立即優先拉取並執行該急件任務，無需在預設佇列中排隊等待常規巡檢任務。
+4. 呼叫 `GET /v1/ops/queues` 可隨時查看各佇列深度與路由統計。
+
+## Use Case：瀏覽器即時畫面 WebSocket 廣播串流與線上緊急中斷（Abort）
+
+1. 任務由 Worker 執行時，維運人員在 Operations Center 選取該任務。
+2. 右側 `Live Telemetry Stream` 卡片透過 WebSocket（`WS /v1/tasks/{id}/live-stream`）即時以 2 FPS 渲染瀏覽器畫面。
+3. 若維運人員觀察到頁面進入無限重試、第三方防爬蟲阻擋或非預期頁面，點選紅色的 **`Abort Task`** 按鈕。
+4. API 呼叫 `POST /v1/tasks/{id}/abort`，Worker 在下一步驟執行前即時攔截中斷信號，安全關閉 Playwright 上下文並將任務標記為 `aborted`，防止資源浪費。
+
+## Use Case：網頁改版啟發式選擇器自我修復（Heuristic Self-Healing）
+
+1. 目標網站進行 UI 改版，按鈕的 ID 由 `button#submit-v1` 變更為 `button[data-testid='submit-v2']`。
+2. Playwright 執行原選擇器發生找不到元素時，啟動 `HeuristicSelfHealingEngine`。
+3. 自癒引擎掃描 DOM 樹，透過語意標籤與按鈕文字進行相似度比對（得分 > 0.6），成功推斷出新的候選選擇器並重新嘗試。
+4. 動作成功完成，系統寫入 `task.self_healed` 審計日誌，在 Visual Step Replay 標記綠色 `Self-Healed ✓`，確保自動化管線在無人值守情況下依然強韌穩定。
+
+## Use Case：Enterprise Helm 3 Chart 套件與 GitOps ArgoCD 持續交付
+
+1. SRE 團隊使用 `deploy/helm/browser-agent/` 將 BrowserAgent 部署至 Kubernetes 叢集，並透過 `values.yaml` 自訂 KMS、OIDC 與 Worker 資源池配置。
+2. 配置 `deploy/gitops/argocd-application.yaml` 連結 Git 倉庫。
+3. ArgoCD 監聽 Git 變更，自動執行聲明式同步與漂移自我修復（Self-Healing），實現現代化企業級 GitOps 交付。

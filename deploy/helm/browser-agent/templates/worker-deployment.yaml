@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "browser-agent.fullname" . }}-worker
+  labels:
+    {{- include "browser-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.replicaCount.worker }}
+  selector:
+    matchLabels:
+      {{- include "browser-agent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "browser-agent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "worker.consumer"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "browser-agent.fullname" . }}-config
+            - secretRef:
+                name: {{ include "browser-agent.fullname" . }}-secrets
+          resources:
+            {{- toYaml .Values.resources.worker | nindent 12 }}

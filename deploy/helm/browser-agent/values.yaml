@@ -1,0 +1,103 @@
+# Default values for browser-agent Helm Chart (V1.3 Enterprise)
+replicaCount:
+  api: 2
+  worker: 2
+
+image:
+  repository: browser-agent
+  pullPolicy: IfNotPresent
+  tag: "1.3.0"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+  hosts:
+    - host: agent.internal.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: browser-agent-tls
+      hosts:
+        - agent.internal.example.com
+
+config:
+  appEnv: "production"
+  appLogLevel: "INFO"
+  authMode: "jwks"
+  authJwksUrl: ""
+  authOidcIssuerUrl: "https://auth.internal.example.com/realms/corp"
+  authOidcClientId: "browser-agent-client"
+  authOidcRedirectUri: "https://agent.internal.example.com/v1/auth/oidc/callback"
+  artifactBackend: "s3"
+  reliabilityStore: "redis"
+  allowlistDomains: "example.com,example.org,internal.corp"
+  multiPriorityEnabled: true
+  queueHighTopic: "agent.tasks.high"
+  queueDefaultTopic: "agent.tasks.queued"
+  queueBatchTopic: "agent.tasks.batch"
+  workerPool: "default"
+  selfHealingEnabled: true
+  selfHealingThreshold: 0.75
+  liveBroadcastEnabled: true
+  kmsProvider: "local"  # "local" | "aws" | "vault"
+  kmsKeyId: "local-kek-v1"
+  kmsRegion: "us-east-1"
+  otelEnabled: true
+  otelServiceName: "browser-agent"
+  otelExporterOtlpEndpoint: "http://otel-collector.monitoring.svc.cluster.local:4318"
+  alertWebhookUrl: ""
+  alertDlqThreshold: 5
+  alertAuthFailuresThreshold: 10
+  alertQuarantineThreshold: 3
+
+secrets:
+  appSecretKey: "change-me-production-secret-32b"
+  databaseUrl: "postgresql+psycopg://agent:secure_pass@postgres-cluster.db.svc:5432/agent"
+  redisUrl: "redis://redis-cluster.db.svc:6379/0"
+  kafkaBootstrapServers: "kafka-cluster.kafka.svc:9092"
+  minioEndpoint: "minio.storage.svc:9000"
+  minioAccessKey: "minioadmin"
+  minioSecretKey: "minio-secure-password"
+  kmsMasterKey: "01234567890123456789012345678901"
+
+resources:
+  api:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  worker:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+
+keda:
+  enabled: true
+  pollingInterval: 15
+  cooldownPeriod: 60
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  kafkaLagThreshold: "5"
+
+serviceMonitor:
+  enabled: true
+  interval: 15s
+  path: /v1/metrics
