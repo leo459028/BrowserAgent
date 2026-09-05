@@ -7,8 +7,19 @@
 | Variable | Example | 說明 |
 |---|---|---|
 | `APP_NAME` | `browser-agent` | FastAPI app title |
-| `APP_VERSION` | `1.3.0` | App/API version |
+| `APP_VERSION` | `1.4.0` | App/API version |
 | `APP_ENV` | `local` | Environment label |
+| `DEFAULT_BROWSER_ENGINE` | `chromium` | 預設瀏覽器核心：`chromium`、`firefox`、`webkit` |
+| `DLP_ENABLED` | `true` | 是否啟用 Zero-Trust 動態資料防洩保護 |
+| `DLP_MASK_PASSWORDS` | `true` | 是否針對密碼輸入框注入 CSS 高斯模糊遮罩 |
+| `DLP_REDACT_TOKENS` | `true` | 是否對 Bearer Token、API Keys 進行正則動態脫敏 |
+| `FEDERATION_ENABLED` | `true` | 是否啟用多叢集排程同盟與容災接管 |
+| `FEDERATION_NODE_ID` | `cluster-node-primary` | 當前節點於同盟中的唯一識別名稱 |
+| `FEDERATION_REGION` | `ap-northeast-1` | 當前節點所屬地理區域識別 |
+| `FEDERATION_HEARTBEAT_INTERVAL_SECONDS` | `5` | 同盟節點心跳維持租約週期（秒） |
+| `FEDERATION_LEASE_TTL_SECONDS` | `15` | 同盟 Leader 排程租約過期時間（秒） |
+| `HITL_ENABLED` | `true` | 是否啟用雙向即時遠端接管與人機協作通道 |
+| `HITL_PAUSE_TIMEOUT_SECONDS` | `600` | 人工接管暫停之最長等待超時時間（秒） |
 | `APP_SECRET_KEY` | `change-me` | local token HS256 secret；正式環境不可使用預設值 |
 | `AUTH_ENABLED` | `true` | 是否啟用 Bearer token 驗證 |
 | `AUTH_MODE` | `local` | `local` 或 `jwks` |
@@ -70,12 +81,12 @@
 
 ## Enterprise Helm 3 Chart 套件 (`deploy/helm/browser-agent/`)
 
-V1.3 提供正式 Enterprise Helm 3 Chart 套件與 GitOps ArgoCD 應用清單：
+V1.4 提供正式 Enterprise Helm 3 Chart 套件與 GitOps ArgoCD 應用清單：
 
 ```text
 deploy/helm/browser-agent/
-├── Chart.yaml                  # Chart 定義（版本 1.3.0）
-├── values.yaml                 # 預設生產級變數配置
+├── Chart.yaml                  # Chart 定義（版本 1.4.0）
+├── values.yaml                 # 預設生產級變數配置（含 V1.4 DLP、同盟、跨瀏覽器）
 └── templates/
     ├── NOTES.txt               # 安裝後指引
     ├── _helpers.tpl            # 命名與標籤模板

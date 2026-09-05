@@ -7,6 +7,8 @@ class TaskCreateRequest(BaseModel):
     instructions: str
     priority: int = 0
     risk_level: str = "low"
+    browser_engine: str = "chromium"
+    matrix_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 class TaskApproveRequest(BaseModel):
@@ -77,10 +79,41 @@ class TaskOut(BaseModel):
     correlation_id: str | None = None
     priority: int
     risk_level: str
+    browser_engine: str = "chromium"
+    matrix_id: str | None = None
+    human_intervened: bool = False
+    dlp_masked: bool = False
     metadata: dict
     created_at: str
     updated_at: str | None = None
     steps: list[TaskStepOut] = Field(default_factory=list)
+
+class TaskInteractRequest(BaseModel):
+    action: str  # "click", "type", "press", "scroll"
+    x: float | None = None
+    y: float | None = None
+    text: str | None = None
+    key: str | None = None
+    delta_x: float | None = None
+    delta_y: float | None = None
+
+class TaskPauseRequest(BaseModel):
+    reason: str = "Operator paused for HITL"
+
+class MatrixTaskCreateRequest(BaseModel):
+    title: str
+    instructions: str
+    priority: int = 0
+    risk_level: str = "low"
+    engines: list[str] = Field(default_factory=lambda: ["chromium", "firefox", "webkit"])
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+class FederationHeartbeatRequest(BaseModel):
+    node_id: str
+    region: str = "default"
+    active_schedules_count: int = 0
+    is_leader: bool | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 class SkillOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)

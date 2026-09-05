@@ -289,6 +289,38 @@ class TaskRunner:
                 },
             )
 
+        # V1.4 統計人機協同 (HITL) 介入事件
+        from .services.live_telemetry import get_telemetry_broadcaster
+        from .services.dlp import get_dlp_service
+
+        broadcaster = get_telemetry_broadcaster()
+        interventions = broadcaster.get_interventions(str(task.id))
+        if interventions:
+            task.human_intervened = True
+            write_audit(
+                self.session,
+                task.tenant_id,
+                self.worker_actor,
+                "task.human_intervened",
+                "task",
+                str(task.id),
+                {
+                    "interventions_count": len(interventions),
+                    "interventions": interventions,
+                    "correlation_id": task.correlation_id,
+                },
+            )
+
+        # V1.4 Zero-Trust DLP 防護狀態
+        dlp = get_dlp_service()
+        dlp_status = dlp.get_status()
+        if dlp.enabled and (dlp_status["masked_elements_count"] > 0 or dlp_status["redacted_strings_count"] > 0):
+            task.dlp_masked = True
+
+        # V1.4 跨瀏覽器引擎紀錄
+        engine = str((task.metadata_ or {}).get("browser_engine") or task.browser_engine or "chromium")
+        task.browser_engine = engine
+
         eval_result = evaluate_execution(
             {"metadata": task.metadata_},
             {
@@ -323,6 +355,10 @@ class TaskRunner:
         set_task_status(self.session, task, final_status)
         task.metadata_ = {
             **(task.metadata_ or {}),
+            "browser_engine": task.browser_engine,
+            "matrix_id": task.matrix_id,
+            "human_intervened": task.human_intervened,
+            "dlp_masked": task.dlp_masked,
             "browser_result": {
                 "final_url": result.final_url,
                 "title": result.title,
@@ -335,6 +371,8 @@ class TaskRunner:
             },
             **({"video_artifact_id": video_id} if video_id else {}),
             **({"self_healing": {"healed_count": len(healed_steps), "details": healed_steps}} if healed_steps else {}),
+            **({"remote_takeover": {"intervened": True, "interventions": interventions}} if interventions else {}),
+            **({"dlp": dlp_status} if dlp.enabled else {}),
         }
 
         self.session.add(task)
