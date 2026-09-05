@@ -1,8 +1,112 @@
 # Test Report
 
-最後更新：2026-09-04
+最後更新：2026-09-05
 
-## V1.1 完整實作（E2E Tracing + Alerting Center + Visual Step Replay）測試結果
+## V1.2 完整實作（Scheduled Tasks + Session Vault + Video Replay + OTLP Exporter + K8s/KEDA）測試結果
+
+日期：2026-09-05
+
+本次完整落實 V1.2 核心增強：
+1. **Scheduled Tasks 定時巡檢調度引擎**：標準 5 欄位 Cron 表達式解析（零外部依賴純 Python）、Redis 分散式搶鎖（`scheduler:lock`，TTL 55s）、`concurrency_policy: skip/allow` 防重入調度、手動立即觸發與背景自動派發。
+2. **Session Vault 工作階段保險箱**：Playwright `storage_state` Cookies/localStorage 憑證治理、多租戶安全隔離、自動跨任務免登入注入、過期狀態追蹤與 `DELETE /v1/sessions/{session_name}` 一鍵強制撤銷。
+3. **全行程 WebM 瀏覽器視訊錄製與播放器**：Playwright 全螢幕視訊錄製、自動寫入 ArtifactStore（Local/S3）、`/v1/tasks/{id}/video` 串流端點、Operations Center 內建 HTML5 Video 播放器。
+4. **OpenTelemetry OTLP Exporter**：非同步背景 Batch Span Exporter，支援標準 OTLP HTTP/JSON 協議將跨服務 Traces 串流導出至外部 APM（Jaeger/Tempo/Datadog），具備丟棄保護與 `/v1/ops/otlp/status` 維運透明度。
+5. **Kubernetes 生產 Manifests 套件與 KEDA**：完整 `deploy/k8s/` Kustomization 套件（API, Worker, ConfigMap, Secret, Service, Ingress），以及基於 Kafka Consumer Group Lag 自動將 Worker 水平擴展（1~10 Pods）之 KEDA ScaledObject。
+6. **Operations Center UI 升級**：V1.2 頂部標題、K8s Mode / OTLP Exporter 指示徽章、Scheduled Tasks 排程管理面板、Session Vault 工作階段面板、WebM Video 播放器卡片。
+
+### 1. Host 測試結果
+
+```powershell
+pytest -q
+```
+**結果：84 passed, 1 warning in 3.48s**（17 個測試模組全數通過）。
+
+新增測試模組明細：
+- `tests/test_v12_scheduler.py`：Cron 解析演算法（星號、步進、範圍、列表）、Redis 分散式鎖競爭、並行策略（skip/allow）與任務派發。
+- `tests/test_v12_session_vault.py`：Storage State 序列化保存、同租戶自動注入復用、跨租戶隔離與撤銷保護。
+- `tests/test_v12_video_artifact.py`：WebM 錄影產生、ArtifactStore 寫入、Task Replay 整合與 Video URL 解析。
+- `tests/test_v12_otlp_exporter.py`：Batch Span 非同步收集、隊列容量保護、批次推播組裝與狀態查詢。
+- `tests/test_v12_apis.py`：Scheduled Tasks CRUD 與手動觸發、Session 列表與撤銷、Video 串流端點、Readiness K8s/OTLP 區塊、Operations Center V1.2 UI 元素。
+
+語法與代碼編譯檢查：
+```powershell
+python -m compileall src tests worker alembic
+```
+**結果：語法檢查全部通過，exit code 0。**
+
+Git Diff 格式檢查：
+```powershell
+git diff --check
+```
+**結果：完全整潔無尾隨空白，exit code 0。**
+
+Kubernetes Manifests Kustomize 檢查：
+```powershell
+kubectl kustomize deploy/k8s/
+```
+**結果：全套 Kubernetes 物件（ConfigMap, Secret, Service, Deployment, Ingress, ScaledObject）格式解析完全正確，exit code 0。**
+
+Production-like Compose Config 檢查：
+```powershell
+docker compose --env-file .env.production.example -f docker-compose.prod.yml config
+```
+**結果：配置結構正確解析，exit code 0。**
+
+### 2. Docker 容器內自動化測試結果
+
+在 Docker Compose 7 大容器（API, Worker, Postgres, Redis, Kafka, Zookeeper, MinIO）完整啟動下執行：
+```powershell
+docker compose exec -T api pytest -q
+```
+**結果：84 passed, 2 warnings in 3.04s**（容器內與 Host 端全套測試 100% 一致通過）。
+
+### 3. 真實瀏覽器端到端測試結果（Playwright Chromium Real Browser Test）
+
+執行命令：
+```powershell
+docker compose exec -T -e BASE_URL=http://api:8000 worker python scripts/comprehensive_browser_test.py
+```
+**測試結果：11 大步驟全數通過（Exit 0）！**
+
+各步驟實際驗證細節：
+1. **角色 Token 認證**：成功簽發並驗證 `creator`, `approver`, `operator`, `admin` 4 組 JWT。
+2. **Operations Readiness 檢驗**：
+   - `app.version`: `1.2.0`
+   - `auth.mode`: `local`
+   - `artifact_backend.backend`: `s3`
+   - `kubernetes.platform`: `docker_or_standalone`
+3. **Production Alerting Center**：
+   - 7 大維運規則即時評估回傳 `status: healthy`，`active_alerts_count: 0`。
+4. **真實 Playwright 瀏覽器任務執行**：
+   - 建立任務，目標為白名單網域 `https://example.com`，狀態為 `pending_approval`。
+   - Approver 呼叫 `/v1/tasks/{id}/approve` 核准，狀態躍遷至 `queued`。
+   - Worker 消費 Kafka 佇列，喚起真實 **Playwright Chromium 瀏覽器** 實體訪問網站。
+   - 任務執行成功，狀態變為 `completed`；提取頁面標題 `'Example Domain'`，Evaluation Verdict 為 `pass`，得分 `100.0`。
+5. **截圖 Artifact 下載與 Magic Bytes 檢驗**：
+   - 透過 `/v1/artifacts/{id}/content` 下載截圖，大小為 `18002 bytes`。
+   - 校驗檔案標頭魔術位元組：開頭符合標準 PNG 二進位格式 `\x89PNG\r\n\x1a\n`。
+6. **全行程 WebM 視訊錄影下載與 EBML 檢驗**：
+   - 任務回放回傳 `video_artifact_id` 與 `video_url`。
+   - 透過 `/v1/tasks/{id}/video` 下載視訊串流，大小為 `23287 bytes`。
+   - 校驗檔案標頭魔術位元組：開頭符合標準 EBML/WebM 格式 `\x1aE\xdf\xa3`。
+7. **Session Vault 治理**：
+   - 成功透過 `GET /v1/sessions` 檢索 Storage State 工作階段。
+   - 成功呼叫 `DELETE /v1/sessions/{session_name}` 執行一鍵撤銷保護，記錄審計日誌。
+8. **Scheduled Tasks 排程調度**：
+   - 成功呼叫 `POST /v1/scheduled-tasks` 建立定時排程。
+   - 成功呼叫 `POST /v1/scheduled-tasks/{id}/run` 立即手動派發任務，回傳新任務 ID。
+9. **Operations Center UI 渲染**：
+   - `GET /operations` 正常回應（HTTP 200），包含 `Browser Agent v1.2 Operations Center`、`Scheduled Tasks`、`Session Vault`、`Full WebM Video Recording` 等卡片。
+10. **Playwright 直接無頭瀏覽器 UI 測試**：
+    - 在 Worker 容器中啟動 Playwright 無頭 Chromium 瀏覽器直接打開 `http://api:8000/operations`。
+    - 驗證 Page Title 為 `Browser Agent v1.2 Operations Center`。
+    - 驗證 H1 標題為 `Browser Agent v1.2 Operations Center`。
+    - 驗證 DOM 節點：`#approve`、`#refresh`、`#k8s-platform-badge`、`#otlp-stream-badge`、`#scheduled-tasks-section`、`#session-vault-section`、`#video-player-card` 全數存在且正常互動。
+    - 截取 Operations Center 渲染截圖並保存至 `scratch/operations_dashboard_verified.png`（`124890 bytes`）。
+
+---
+
+## 歷史紀錄：V1.1 完整實作（E2E Tracing + Alerting Center + Visual Step Replay）測試結果
 
 日期：2026-09-04
 

@@ -17,6 +17,13 @@ class TraceBuffer:
     def record(self, span: Span) -> None:
         with self._lock:
             self._spans.append(span)
+        try:
+            from .exporter import get_otlp_exporter
+            exporter = get_otlp_exporter()
+            if exporter.enabled:
+                exporter.enqueue(span)
+        except Exception:
+            pass
 
     def get_trace(self, trace_id: str) -> list[dict]:
         with self._lock:

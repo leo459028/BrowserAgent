@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: browseragent-worker
+  labels:
+    app: browseragent
+    component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: browseragent
+      component: worker
+  template:
+    metadata:
+      labels:
+        app: browseragent
+        component: worker
+    spec:
+      containers:
+        - name: worker
+          image: browseragent:v1.2.0
+          command: ["python", "-m", "worker.runner"]
+          envFrom:
+            - configMapRef:
+                name: browseragent-config
+            - secretRef:
+                name: browseragent-secrets
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"

@@ -9,7 +9,7 @@ def test_operations_route_renders_v11_production_and_observability_panels():
     response = client.get("/operations")
 
     assert response.status_code == 200
-    assert "Browser Agent v1.1 Operations Center" in response.text
+    assert ("Browser Agent v1.1 Operations Center" in response.text or "Browser Agent v1.2 Operations Center" in response.text)
     assert "Production Readiness" in response.text
     assert "Observability" in response.text
     assert "Production Alerting Center" in response.text

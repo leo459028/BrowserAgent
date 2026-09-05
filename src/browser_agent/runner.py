@@ -23,10 +23,11 @@ class TaskRunner:
         allowed_domains: set[str],
         timeout_seconds: int = 120,
         worker_actor: str = "worker",
+        record_video: bool = True,
     ):
         self.session = session
         self.artifact_store = build_artifact_store(artifact_base_path)
-        self.browser = BrowserRunner(headless=headless, timeout_seconds=timeout_seconds)
+        self.browser = BrowserRunner(headless=headless, timeout_seconds=timeout_seconds, record_video=record_video)
         self.allowed_domains = allowed_domains
         self.planner = HeuristicPlanner()
         self.worker_actor = worker_actor
@@ -113,6 +114,34 @@ class TaskRunner:
             ))
         self.session.flush()
 
+        use_session = (task.metadata_ or {}).get("use_session")
+        loaded_storage_state = None
+        if use_session:
+            from sqlalchemy import select
+            import json
+            session_artifacts = (
+                self.session.execute(
+                    select(models.TaskArtifact)
+                    .join(models.Task, models.Task.id == models.TaskArtifact.task_id)
+                    .where(
+                        models.Task.tenant_id == task.tenant_id,
+                        models.TaskArtifact.artifact_type == "storage_state",
+                    )
+                    .order_by(models.TaskArtifact.created_at.desc())
+                )
+                .scalars()
+                .all()
+            )
+            for sa in session_artifacts:
+                meta = sa.metadata_ or {}
+                if meta.get("session_name") == use_session:
+                    try:
+                        c_bytes = self.artifact_store.read_bytes(sa.uri)
+                        loaded_storage_state = json.loads(c_bytes.decode("utf-8"))
+                        break
+                    except Exception:
+                        pass
+
         result = self.browser.execute(
             {
                 "id": str(task.id),
@@ -120,6 +149,7 @@ class TaskRunner:
             },
             self.artifact_store,
             self.allowed_domains,
+            storage_state=loaded_storage_state,
         )
 
         observations_by_step = {
@@ -164,10 +194,12 @@ class TaskRunner:
         self.session.flush()
 
         screenshot_id = None
+        video_id = None
         for art in artifact_records:
-            if art.artifact_type == "screenshot":
+            if art.artifact_type == "screenshot" and not screenshot_id:
                 screenshot_id = str(art.id)
-                break
+            elif art.artifact_type == "video" and not video_id:
+                video_id = str(art.id)
 
         from .tracing import generate_span_id, get_trace_buffer, Span
         buffer = get_trace_buffer()
@@ -251,6 +283,7 @@ class TaskRunner:
                 "verdict": eval_result.verdict,
                 "checks": eval_result.checks,
             },
+            **({"video_artifact_id": video_id} if video_id else {}),
         }
         self.session.add(task)
         write_audit(
@@ -272,6 +305,10 @@ def _artifact_media_type(artifact_type: str) -> str:
         return "image/png"
     if artifact_type == "html":
         return "text/html; charset=utf-8"
+    if artifact_type == "video":
+        return "video/webm"
+    if artifact_type == "storage_state":
+        return "application/json"
     return "application/octet-stream"
 
 

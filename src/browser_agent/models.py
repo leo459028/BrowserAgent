@@ -60,8 +60,27 @@ class Task(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
+    scheduled_task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("scheduled_tasks.id", ondelete="SET NULL"), nullable=True)
+    scheduled_task = relationship("ScheduledTask", back_populates="tasks")
     steps = relationship("TaskStep", back_populates="task", cascade="all, delete-orphan")
     artifacts = relationship("TaskArtifact", back_populates="task", cascade="all, delete-orphan")
+
+class ScheduledTask(Base):
+    __tablename__ = "scheduled_tasks"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    cron_expression: Mapped[str] = mapped_column(Text, nullable=False)
+    concurrency_policy: Mapped[str] = mapped_column(Text, nullable=False, default="skip")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    task_template: Mapped[dict] = mapped_column(JSON, nullable=False)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    tasks = relationship("Task", back_populates="scheduled_task")
 
 class TaskStep(Base):
     __tablename__ = "task_steps"

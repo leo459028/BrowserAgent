@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: browseragent-api
+  labels:
+    app: browseragent
+    component: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: browseragent
+      component: api
+  template:
+    metadata:
+      labels:
+        app: browseragent
+        component: api
+    spec:
+      containers:
+        - name: api
+          image: browseragent:v1.2.0
+          command: ["uvicorn", "src.browser_agent.app:app", "--host", "0.0.0.0", "--port", "8000"]
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: browseragent-config
+            - secretRef:
+                name: browseragent-secrets
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"

@@ -28,7 +28,12 @@ from .schemas import (
     TaskCreateRequest,
     TaskApproveRequest,
     SkillCreateRequest,
+    ScheduledTaskCreateRequest,
+    ScheduledTaskUpdateRequest,
+    ScheduledTaskOut,
 )
+from .services.scheduler import compute_next_run, evaluate_scheduled_tasks, trigger_scheduled_task
+from .tracing.exporter import get_otlp_exporter
 from .orchestrator import Orchestrator
 from .skillhub import SkillHub
 from .kafka import get_bus
@@ -67,6 +72,7 @@ DEFAULT_TASK_PAYLOAD = {
         "domains": ["example.com"],
         "start_url": "https://example.com",
         "expected_domain": "example.com",
+        "record_video": True,
     },
 }
 
@@ -155,6 +161,10 @@ def operations_readiness(
             "bucket": settings.minio_bucket if artifact_backend == "s3" else None,
             "base_path": settings.artifact_base_path if artifact_backend == "local" else None,
         },
+        "kubernetes": {
+            "detected": bool(__import__("os").environ.get("KUBERNETES_SERVICE_HOST") or __import__("os").path.exists("/var/run/secrets/kubernetes.io/serviceaccount")),
+            "platform": "kubernetes" if bool(__import__("os").environ.get("KUBERNETES_SERVICE_HOST") or __import__("os").path.exists("/var/run/secrets/kubernetes.io/serviceaccount")) else "docker_or_standalone",
+        },
     })
     production = build_production_readiness(settings, reliability_status)
     observability = build_observability_readiness(settings)
@@ -237,6 +247,7 @@ def build_production_readiness(settings, reliability_status: dict) -> dict:
 
 
 def build_observability_readiness(settings) -> dict:
+    exporter = get_otlp_exporter(settings)
     return {
         "otel_ready": True,
         "otel_enabled": bool(getattr(settings, "otel_enabled", False)),
@@ -244,6 +255,7 @@ def build_observability_readiness(settings) -> dict:
         "otel_exporter_otlp_endpoint_configured": bool(getattr(settings, "otel_exporter_otlp_endpoint", "")),
         "otel_resource_attributes": getattr(settings, "otel_resource_attributes", ""),
         "otel_propagators": getattr(settings, "otel_propagators", "tracecontext,baggage"),
+        "otlp_exporter": exporter.status(),
         "log_schema_fields": LOG_SCHEMA_FIELDS,
     }
 
@@ -688,10 +700,18 @@ def get_task_replay(
     trace_context = (getattr(task, "metadata_", {}) or {}).get("trace_context") or {}
     trace_id = trace_context.get("trace_id") or getattr(task, "correlation_id", None)
 
+    video_art_id = None
+    for artifact in getattr(task, "artifacts", []):
+        if artifact.artifact_type == "video":
+            video_art_id = str(artifact.id)
+            break
+
     return {
         "task_id": str(task.id),
         "status": task.status,
         "trace_id": trace_id,
+        "video_artifact_id": video_art_id,
+        "video_url": f"/v1/artifacts/{video_art_id}/content" if video_art_id else None,
         "steps_visual": steps_visual,
         "evaluation_summary": eval_summary,
         "timeline": timeline,
@@ -994,10 +1014,271 @@ def list_skills(
         for s in skills
     ]
 
+
+@router.get("/v1/scheduled-tasks")
+def list_scheduled_tasks(
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    stmt = (
+        select(models.ScheduledTask)
+        .where(models.ScheduledTask.tenant_id == actor.tenant_id)
+        .order_by(models.ScheduledTask.created_at.desc())
+    )
+    schedules = session.execute(stmt).scalars().all()
+    return [
+        {
+            "id": str(s.id),
+            "name": s.name,
+            "cron_expression": s.cron_expression,
+            "concurrency_policy": s.concurrency_policy,
+            "is_active": s.is_active,
+            "task_template": s.task_template,
+            "last_run_at": s.last_run_at.isoformat() if s.last_run_at else None,
+            "next_run_at": s.next_run_at.isoformat() if s.next_run_at else None,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        }
+        for s in schedules
+    ]
+
+
+@router.post("/v1/scheduled-tasks")
+def create_scheduled_task(
+    req: ScheduledTaskCreateRequest,
+    actor: ActorContext = Depends(require_roles("creator", "admin")),
+    session: Session = Depends(get_session),
+):
+    try:
+        next_run = compute_next_run(req.cron_expression)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    now = datetime.now(timezone.utc)
+    sched = models.ScheduledTask(
+        tenant_id=actor.tenant_id,
+        name=req.name,
+        cron_expression=req.cron_expression,
+        concurrency_policy=req.concurrency_policy,
+        is_active=req.is_active,
+        task_template=req.task_template,
+        next_run_at=next_run,
+        created_by=actor.user_id,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(sched)
+    session.commit()
+    write_audit(
+        session,
+        actor.tenant_id,
+        actor.email,
+        "scheduled_task.created",
+        "scheduled_task",
+        str(sched.id),
+        {"name": sched.name, "cron_expression": sched.cron_expression, "next_run_at": next_run.isoformat()},
+    )
+    session.commit()
+    return {
+        "id": str(sched.id),
+        "name": sched.name,
+        "cron_expression": sched.cron_expression,
+        "is_active": sched.is_active,
+        "next_run_at": sched.next_run_at.isoformat() if sched.next_run_at else None,
+        "created_at": sched.created_at.isoformat() if sched.created_at else now.isoformat(),
+    }
+
+
+@router.patch("/v1/scheduled-tasks/{schedule_id}")
+def update_scheduled_task(
+    schedule_id: str,
+    req: ScheduledTaskUpdateRequest,
+    actor: ActorContext = Depends(require_roles("creator", "admin")),
+    session: Session = Depends(get_session),
+):
+    sched = session.get(models.ScheduledTask, uuid.UUID(schedule_id))
+    if not sched or sched.tenant_id != actor.tenant_id:
+        raise HTTPException(status_code=404, detail="scheduled task not found")
+
+    if req.name is not None:
+        sched.name = req.name
+    if req.cron_expression is not None:
+        try:
+            sched.cron_expression = req.cron_expression
+            sched.next_run_at = compute_next_run(req.cron_expression)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    if req.concurrency_policy is not None:
+        sched.concurrency_policy = req.concurrency_policy
+    if req.task_template is not None:
+        sched.task_template = req.task_template
+    if req.is_active is not None:
+        sched.is_active = req.is_active
+
+    sched.updated_at = datetime.now(timezone.utc)
+    session.commit()
+    write_audit(
+        session,
+        actor.tenant_id,
+        actor.email,
+        "scheduled_task.updated",
+        "scheduled_task",
+        str(sched.id),
+        {"name": sched.name, "is_active": sched.is_active},
+    )
+    session.commit()
+    return {
+        "id": str(sched.id),
+        "name": sched.name,
+        "cron_expression": sched.cron_expression,
+        "is_active": sched.is_active,
+        "next_run_at": sched.next_run_at.isoformat() if sched.next_run_at else None,
+    }
+
+
+@router.post("/v1/scheduled-tasks/{schedule_id}/run")
+def run_scheduled_task_immediately(
+    schedule_id: str,
+    actor: ActorContext = Depends(require_roles("creator", "operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    sched = session.get(models.ScheduledTask, uuid.UUID(schedule_id))
+    if not sched or sched.tenant_id != actor.tenant_id:
+        raise HTTPException(status_code=404, detail="scheduled task not found")
+
+    settings = get_settings()
+    bus = get_bus(settings.kafka_bootstrap_servers)
+    task = trigger_scheduled_task(session, bus, sched, actor_email=actor.email)
+    return {
+        "triggered": True,
+        "scheduled_task_id": str(sched.id),
+        "task_id": str(task.id),
+        "status": task.status,
+    }
+
+
+@router.post("/v1/scheduled-tasks/evaluate")
+def evaluate_schedules_endpoint(
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    settings = get_settings()
+    bus = get_bus(settings.kafka_bootstrap_servers)
+    res = evaluate_scheduled_tasks(session, bus, settings)
+    return res
+
+
+@router.get("/v1/sessions")
+def list_sessions(
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    stmt = (
+        select(models.TaskArtifact)
+        .join(models.Task, models.Task.id == models.TaskArtifact.task_id)
+        .where(
+            models.Task.tenant_id == actor.tenant_id,
+            models.TaskArtifact.artifact_type == "storage_state",
+        )
+        .order_by(models.TaskArtifact.created_at.desc())
+    )
+    artifacts = session.execute(stmt).scalars().all()
+    sessions_by_name = {}
+    for a in artifacts:
+        meta = a.metadata_ or {}
+        s_name = meta.get("session_name") or f"session-{str(a.id)[:8]}"
+        if s_name not in sessions_by_name:
+            sessions_by_name[s_name] = {
+                "session_name": s_name,
+                "artifact_id": str(a.id),
+                "task_id": str(a.task_id),
+                "cookies_count": meta.get("cookies_count", 0),
+                "created_at": a.created_at.isoformat(),
+                "uri": a.uri,
+                "backend": meta.get("backend", "local"),
+                "status": meta.get("status", "valid"),
+            }
+    return list(sessions_by_name.values())
+
+
+@router.delete("/v1/sessions/{session_name}")
+def delete_session(
+    session_name: str,
+    actor: ActorContext = Depends(require_roles("admin")),
+    session: Session = Depends(get_session),
+):
+    stmt = (
+        select(models.TaskArtifact)
+        .join(models.Task, models.Task.id == models.TaskArtifact.task_id)
+        .where(
+            models.Task.tenant_id == actor.tenant_id,
+            models.TaskArtifact.artifact_type == "storage_state",
+        )
+    )
+    artifacts = session.execute(stmt).scalars().all()
+    revoked_count = 0
+    for a in artifacts:
+        meta = dict(a.metadata_ or {})
+        if meta.get("session_name") == session_name:
+            meta["status"] = "revoked"
+            a.metadata_ = meta
+            session.add(a)
+            revoked_count += 1
+
+    session.commit()
+    write_audit(
+        session,
+        actor.tenant_id,
+        actor.email,
+        "session.revoked",
+        "session",
+        session_name,
+        {"revoked_artifacts_count": revoked_count},
+    )
+    session.commit()
+    return {"revoked": True, "session_name": session_name, "count": revoked_count}
+
+
+@router.get("/v1/tasks/{task_id}/video")
+def get_task_video(
+    task_id: str,
+    actor: ActorContext = Depends(require_roles("creator", "approver", "operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    task = session.get(models.Task, uuid.UUID(task_id))
+    if not task or task.tenant_id != actor.tenant_id:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    video_art = None
+    for a in getattr(task, "artifacts", []):
+        if a.artifact_type == "video":
+            video_art = a
+            break
+
+    if not video_art:
+        raise HTTPException(status_code=404, detail="no video recording found for this task")
+
+    return RedirectResponse(url=f"/v1/artifacts/{video_art.id}/content", status_code=307)
+
+
+@router.get("/v1/ops/otlp/status")
+def get_otlp_status(actor: ActorContext = Depends(require_roles("operator", "admin"))):
+    settings = get_settings()
+    exporter = get_otlp_exporter(settings)
+    return exporter.status()
+
+
+@router.post("/v1/ops/otlp/flush")
+def flush_otlp_spans(actor: ActorContext = Depends(require_roles("admin"))):
+    settings = get_settings()
+    exporter = get_otlp_exporter(settings)
+    res = exporter.flush()
+    return {"flushed": True, "result": res, "status": exporter.status()}
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(getattr(settings, "app_log_level", "INFO"))
-    app = FastAPI(title=getattr(settings, "app_name", "browser-agent"), version=getattr(settings, "app_version", "1.1.0"))
+    app = FastAPI(title=getattr(settings, "app_name", "browser-agent"), version=getattr(settings, "app_version", "1.2.0"))
 
     @app.middleware("http")
     async def correlation_middleware(request: Request, call_next):

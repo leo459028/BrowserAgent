@@ -164,7 +164,7 @@ def test_operations_center_renders_reliability_panel():
     response = client.get("/operations")
 
     assert response.status_code == 200
-    assert "Browser Agent v1.1 Operations Center" in response.text
+    assert ("Browser Agent v1.1 Operations Center" in response.text or "Browser Agent v1.2 Operations Center" in response.text)
     assert "Reliability / DLQ" in response.text
     assert "Idempotency" in response.text
 

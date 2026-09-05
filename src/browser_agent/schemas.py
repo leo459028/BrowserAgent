@@ -28,6 +28,20 @@ class AlertTestDispatchRequest(BaseModel):
     note: str = "Test alert dispatch from Operations Center"
     level: str = "warning"
 
+class ScheduledTaskCreateRequest(BaseModel):
+    name: str
+    cron_expression: str
+    concurrency_policy: str = "skip"
+    task_template: dict[str, Any]
+    is_active: bool = True
+
+class ScheduledTaskUpdateRequest(BaseModel):
+    name: str | None = None
+    cron_expression: str | None = None
+    concurrency_policy: str | None = None
+    task_template: dict[str, Any] | None = None
+    is_active: bool | None = None
+
 
 class SkillCreateRequest(BaseModel):
     name: str
@@ -81,3 +95,18 @@ class SkillOut(BaseModel):
     output_schema: dict
     policy_tags: list[str]
     is_active: bool
+
+class ScheduledTaskOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    tenant_id: UUID
+    name: str
+    cron_expression: str
+    concurrency_policy: str
+    is_active: bool
+    task_template: dict
+    last_run_at: str | None = None
+    next_run_at: str | None = None
+    created_at: str
+    updated_at: str | None = None

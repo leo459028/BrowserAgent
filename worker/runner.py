@@ -29,6 +29,7 @@ def run_task(task_id: str | uuid.UUID, *, mark_failed_on_error: bool = True):
             allowed_domains=settings.allowlist_domain_set,
             timeout_seconds=settings.task_timeout_seconds,
             worker_actor=f"service:{settings.worker_service_id}",
+            record_video=settings.worker_record_video_default,
         )
         runner.run(task)
         session.commit()
