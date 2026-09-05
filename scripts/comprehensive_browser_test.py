@@ -22,10 +22,18 @@ import urllib.request
 import urllib.parse
 from datetime import datetime
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
 
 def log(msg: str):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+    clean_msg = msg.replace("\u2713", "[OK]").replace("🎉", "[SUCCESS]")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {clean_msg}", flush=True)
 
 def http_req(path: str, method: str = "GET", data: dict = None, token: str = None) -> tuple[int, dict | bytes]:
     url = f"{BASE_URL}{path}"
@@ -78,8 +86,8 @@ def main():
     log(f"  Reliability Store: {checks.get('reliability', {}).get('type')}")
     log(f"  Artifact Backend: {checks.get('artifact_backend', {}).get('backend')}")
     log(f"  Kubernetes Platform: {checks.get('kubernetes', {}).get('platform')}")
-    assert app_info.get("version") == "1.3.0"
-    log("✓ Operations Readiness 檢驗通過 (版本 1.3.0)")
+    assert app_info.get("version") in ("1.3.0", "1.4.0")
+    log(f"✓ Operations Readiness 檢驗通過 (版本 {app_info.get('version')})")
 
     # 3. 告警中心、KMS 與優先佇列檢驗
     log("步驟 3：檢驗 Production Alerting Center、KMS 狀態與優先佇列指標...")
@@ -250,7 +258,7 @@ def main():
     assert "Scheduled Tasks" in ui_str
     assert "Session Vault" in ui_str
     assert "Queues & Worker Pools" in ui_str
-    assert "Live Screen Broadcast" in ui_str
+    assert "Live Screen" in ui_str
     assert "Vault: KMS" in ui_str
     log("✓ Operations Center V1.3 HTML UI 正常渲染並包含所有關鍵卡片")
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Browser Agent v1.3 Operations Center</title>
+  <title>Browser Agent v1.4 Operations Center</title>
   <style>
     :root {
       color-scheme: light;
@@ -198,14 +198,16 @@
     <header>
       <div>
         <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
-          <h1 style="margin:0;">Browser Agent v1.3 Operations Center (維運中心)</h1>
+          <h1 style="margin:0;">Browser Agent v1.4 Operations Center (維運中心)</h1>
           <span id="system-alert-badge" class="status pass" style="font-size: 12px;">All Systems Normal</span>
           <span id="vault-kms-badge" class="status pass" style="font-size: 12px;">Vault: KMS (AES-256-GCM)</span>
+          <span id="dlp-shield-badge" class="status pass" style="font-size: 12px;">DLP: Shielded</span>
+          <span id="cluster-fed-badge" class="status pass" style="font-size: 12px;">Federation: Leader</span>
           <span id="oidc-sso-badge" class="status pass" style="font-size: 12px;">OIDC: Ready</span>
           <span id="k8s-platform-badge" class="status pass" style="font-size: 12px;">Platform: K8s/Helm Ready</span>
           <span id="otlp-stream-badge" class="status pass" style="font-size: 12px;">OTLP: Ready</span>
         </div>
-        <div class="muted">Enterprise Operations Center: KMS Envelope Vault, Heuristic Self-Healing, WebSocket Live Broadcast, Multi-Priority Pools, Helm GitOps & OIDC SSO. (Browser Agent v1.2 Operations Center compatible)</div>
+        <div class="muted">Enterprise Operations Center V1.4: Interactive Remote Takeover (HITL), Cross-Browser Grid Matrix, Zero-Trust DLP Shielding, Multi-Cluster Federation & KMS Envelope Vault. (Browser Agent v1.2 Operations Center compatible)</div>
       </div>
       <div class="toolbar">
         <button id="btn-sso-login" class="secondary" title="Sign in via Enterprise OpenID Connect Provider">SSO Login with IdP</button>
@@ -276,7 +278,16 @@
           <h2>Create Task (建立任務)</h2>
           <div class="button-row">
             <select id="scenario"></select>
+            <select id="browser-engine-select" style="min-width:130px;" title="Browser Engine">
+              <option value="chromium" selected>Chromium</option>
+              <option value="firefox">Firefox</option>
+              <option value="webkit">WebKit (Safari)</option>
+            </select>
             <button id="create-task">Create task</button>
+            <button id="create-matrix-task" class="secondary" title="Fan-out matrix task across Chromium, Firefox and WebKit">Fan-out Matrix</button>
+          </div>
+          <div style="margin-top:6px; font-size:12px; color:var(--muted); display:flex; align-items:center; gap:12px;">
+            <label style="cursor:pointer;"><input type="checkbox" id="dlp-toggle" checked style="min-width:auto; vertical-align:middle;"> Enable Zero-Trust DLP Shielding</label>
           </div>
           <p id="scenario-help" class="muted"></p>
           <pre id="payload"></pre>
@@ -341,6 +352,35 @@
             <div class="label">Default Queue</div><div id="queue-topic-default" class="value">agent.tasks.queued</div>
             <div class="label">Batch Queue</div><div id="queue-topic-batch" class="value">agent.tasks.batch</div>
           </div>
+        </section>
+
+        <section id="dlp-section">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h2 style="margin:0;">Zero-Trust DLP Security (資料防洩中樞)</h2>
+            <button id="refresh-dlp" class="secondary" style="min-height:28px; font-size:12px; padding:0 8px;">Refresh</button>
+          </div>
+          <div class="kv">
+            <div class="label">DLP Engine</div><div><span id="dlp-status" class="status pass">Active</span></div>
+            <div class="label">Masked Elements</div><div id="dlp-masked-count" class="value">0</div>
+            <div class="label">Redacted Strings</div><div id="dlp-redacted-count" class="value">0</div>
+            <div class="label">Active Rules</div><div id="dlp-rules" class="value" style="font-size:12px;">password, bearer_token, api_key, credit_card, ssn</div>
+          </div>
+        </section>
+
+        <section id="federation-section">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h2 style="margin:0;">Cluster Federation & HA Topology (同盟拓撲)</h2>
+            <div style="display:flex; gap:6px;">
+              <button id="refresh-federation" class="secondary" style="min-height:28px; font-size:12px; padding:0 8px;">Refresh</button>
+              <button id="btn-force-reelection" class="secondary" style="min-height:28px; font-size:12px; padding:0 8px;">Re-elect</button>
+            </div>
+          </div>
+          <div class="kv" style="margin-bottom:8px;">
+            <div class="label">Cluster Status</div><div><span id="fed-cluster-status" class="status pass">Healthy</span></div>
+            <div class="label">Current Leader</div><div id="fed-leader-id" class="value">-</div>
+            <div class="label">Local Node</div><div id="fed-local-node" class="value">-</div>
+          </div>
+          <div id="federation-nodes-list" class="muted" style="font-size:12px;">Loading cluster nodes...</div>
         </section>
 
         <section>
@@ -444,18 +484,30 @@
           <div id="live-broadcast-card" style="border:1px solid var(--line); border-radius:6px; padding:12px; background:var(--panel-soft); margin-bottom:12px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <div style="display:flex; align-items:center; gap:8px;">
-                <span style="font-weight:700;">Live Screen Broadcast (WebSocket Telemetry) (即時畫面廣播)</span>
+                <span style="font-weight:700;">Live Screen & Remote Takeover (雙向遠端接管)</span>
                 <span id="live-status-pill" class="status warn" style="font-size:11px; min-height:18px; padding:0 6px;">STANDBY</span>
+                <span id="takeover-status-pill" class="status pass" style="font-size:11px; min-height:18px; padding:0 6px;">AUTO</span>
               </div>
-              <button id="btn-abort-task" class="danger" style="min-height:28px; font-size:12px; padding:0 10px;" disabled>Abort Execution</button>
+              <div style="display:flex; gap:6px;">
+                <button id="btn-pause-takeover" class="secondary" style="min-height:28px; font-size:12px; padding:0 8px;" disabled>Pause & Take Over (HITL)</button>
+                <button id="btn-resume-takeover" style="min-height:28px; font-size:12px; padding:0 8px; background:var(--ok); border-color:var(--ok);" disabled>Resume Automation</button>
+                <button id="btn-abort-task" class="danger" style="min-height:28px; font-size:12px; padding:0 10px;" disabled>Abort</button>
+              </div>
             </div>
-            <div id="live-screen-container" style="min-height:180px; display:flex; align-items:center; justify-content:center; background:#000; border-radius:4px; overflow:hidden;">
-              <img id="live-screen-img" src="" alt="Live Stream Frame" style="max-width:100%; max-height:360px; display:none;" />
+            <div id="live-screen-container" style="position:relative; min-height:180px; display:flex; align-items:center; justify-content:center; background:#000; border-radius:4px; overflow:hidden;">
+              <img id="live-screen-img" src="" alt="Live Stream Frame" style="max-width:100%; max-height:360px; display:none; cursor:crosshair;" title="Click anywhere on screen to dispatch mouse click to page" />
               <span id="live-screen-placeholder" class="muted" style="color:#aaa; font-size:13px;">No active live execution streaming. Select an executing task to inspect live screen.</span>
             </div>
-            <div id="live-stream-meta" style="margin-top:6px; font-size:12px; color:var(--muted); display:flex; justify-content:space-between;">
-              <span id="live-stream-step">Step: -</span>
-              <span id="live-stream-url">URL: -</span>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; gap:8px; flex-wrap:wrap;">
+              <div id="live-stream-meta" style="font-size:12px; color:var(--muted); display:flex; gap:16px;">
+                <span id="live-stream-step">Step: -</span>
+                <span id="live-stream-url">URL: -</span>
+                <span id="live-stream-engine">Engine: -</span>
+              </div>
+              <div style="display:flex; gap:6px; align-items:center;">
+                <input id="remote-key-input" placeholder="Type text to send to page..." style="min-height:28px; font-size:12px; min-width:180px; padding:0 8px;" disabled />
+                <button id="btn-send-keys" class="secondary" style="min-height:28px; font-size:12px; padding:0 8px;" disabled>Send Keys</button>
+              </div>
             </div>
           </div>
 
@@ -503,6 +555,15 @@
             <button id="refresh-sessions" class="secondary" style="min-height:30px; font-size:12px; padding:0 8px;">Refresh</button>
           </div>
           <div id="sessions-list" class="muted">Loading stored sessions...</div>
+        </section>
+
+        <section id="matrix-comparison-section">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h2 style="margin:0;">Cross-Browser Matrix Execution (跨瀏覽器矩陣執行)</h2>
+            <button id="refresh-matrix" class="secondary" style="min-height:30px; font-size:12px; padding:0 8px;">Refresh</button>
+          </div>
+          <div id="matrix-summary" class="muted" style="font-size:13px;">No active matrix job. Click "Fan-out Matrix" in Create Task to dispatch a matrix job across Chromium, Firefox and WebKit.</div>
+          <div id="matrix-table-container" style="margin-top:8px;"></div>
         </section>
 
         <section>
@@ -824,10 +885,17 @@
       $("create-task").disabled = true;
       setStatus("task-status", "creating");
       try {
+        const payload = currentPayload();
+        if ($("browser-engine-select")) {
+          payload.browser_engine = $("browser-engine-select").value;
+        }
+        if ($("dlp-toggle") && $("dlp-toggle").checked) {
+          payload.metadata = {...(payload.metadata || {}), dlp_enabled: true};
+        }
         const created = await getJson("/v1/tasks", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify(currentPayload()),
+          body: JSON.stringify(payload),
         }, activeRole);
         currentTaskId = created.task_id;
         await refreshAll();
@@ -910,6 +978,9 @@
           refreshScheduledTasks(),
           refreshSessions(),
           refreshQueues(),
+          refreshDlpStatus(),
+          refreshFederationTopology(),
+          refreshMatrixSummary(),
         ]);
         if (btn) {
           btn.textContent = "Refreshed ✓";
@@ -1778,9 +1849,56 @@
               }
               if (abortBtn) abortBtn.disabled = true;
               stopLiveStream();
+            } else if (payload.type === "takeover_state") {
+              const takeoverPill = $("takeover-status-pill");
+              if (takeoverPill) {
+                if (payload.paused) {
+                  takeoverPill.className = "status warn";
+                  takeoverPill.textContent = "PAUSED (HITL)";
+                  if ($("btn-pause-takeover")) $("btn-pause-takeover").disabled = true;
+                  if ($("btn-resume-takeover")) $("btn-resume-takeover").disabled = false;
+                  if ($("remote-key-input")) $("remote-key-input").disabled = false;
+                  if ($("btn-send-keys")) $("btn-send-keys").disabled = false;
+                } else {
+                  takeoverPill.className = "status pass";
+                  takeoverPill.textContent = "AUTO";
+                  if ($("btn-pause-takeover")) $("btn-pause-takeover").disabled = false;
+                  if ($("btn-resume-takeover")) $("btn-resume-takeover").disabled = true;
+                  if ($("remote-key-input")) $("remote-key-input").disabled = true;
+                  if ($("btn-send-keys")) $("btn-send-keys").disabled = true;
+                }
+              }
             }
           } catch (e) {}
         };
+
+        // 畫布滑鼠反向點擊映射
+        if (imgEl) {
+          imgEl.onclick = async (e) => {
+            if (!currentTaskId) return;
+            const rect = imgEl.getBoundingClientRect();
+            const scaleX = 1440 / Math.max(rect.width, 1);
+            const scaleY = 900 / Math.max(rect.height, 1);
+            const clickX = Math.round((e.clientX - rect.left) * scaleX);
+            const clickY = Math.round((e.clientY - rect.top) * scaleY);
+            try {
+              await getJson(`/v1/tasks/${currentTaskId}/interact`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({action: "click", x: clickX, y: clickY})
+              }, "operator");
+              console.log(`Dispatched click at (${clickX}, ${clickY})`);
+            } catch (err) {
+              console.warn("Click dispatch failed:", err);
+            }
+          };
+        }
+
+        if ($("btn-pause-takeover")) $("btn-pause-takeover").disabled = false;
+        if ($("btn-resume-takeover")) $("btn-resume-takeover").disabled = true;
+        if ($("remote-key-input")) $("remote-key-input").disabled = false;
+        if ($("btn-send-keys")) $("btn-send-keys").disabled = false;
+
         currentLiveSocket.onerror = () => {
           pollLiveFrame(taskId);
         };
@@ -1794,6 +1912,10 @@
         try { currentLiveSocket.close(); } catch (e) {}
         currentLiveSocket = null;
       }
+      if ($("btn-pause-takeover")) $("btn-pause-takeover").disabled = true;
+      if ($("btn-resume-takeover")) $("btn-resume-takeover").disabled = true;
+      if ($("remote-key-input")) $("remote-key-input").disabled = true;
+      if ($("btn-send-keys")) $("btn-send-keys").disabled = true;
     }
 
     async function pollLiveFrame(taskId) {
@@ -1809,6 +1931,153 @@
           if (placeholder) placeholder.style.display = "none";
         }
       } catch (e) {}
+    }
+
+    // --- V1.4 雙向接管 (HITL) 互動控制 ---
+    async function pauseTakeover() {
+      if (!currentTaskId) return;
+      try {
+        await getJson(`/v1/tasks/${currentTaskId}/pause`, {method: "POST"}, "operator");
+        $("btn-pause-takeover").disabled = true;
+        $("btn-resume-takeover").disabled = false;
+        $("remote-key-input").disabled = false;
+        $("btn-send-keys").disabled = false;
+        $("takeover-status-pill").className = "status warn";
+        $("takeover-status-pill").textContent = "PAUSED (HITL)";
+      } catch (err) {
+        alert("Failed to pause task: " + err.message);
+      }
+    }
+
+    async function resumeTakeover() {
+      if (!currentTaskId) return;
+      try {
+        await getJson(`/v1/tasks/${currentTaskId}/resume`, {method: "POST"}, "operator");
+        $("btn-pause-takeover").disabled = false;
+        $("btn-resume-takeover").disabled = true;
+        $("remote-key-input").disabled = true;
+        $("btn-send-keys").disabled = true;
+        $("takeover-status-pill").className = "status pass";
+        $("takeover-status-pill").textContent = "AUTO";
+      } catch (err) {
+        alert("Failed to resume task: " + err.message);
+      }
+    }
+
+    async function sendRemoteKeys() {
+      if (!currentTaskId) return;
+      const text = $("remote-key-input").value;
+      if (!text) return;
+      try {
+        await getJson(`/v1/tasks/${currentTaskId}/interact`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({action: "type", text: text})
+        }, "operator");
+        $("remote-key-input").value = "";
+      } catch (err) {
+        alert("Failed to send keys: " + err.message);
+      }
+    }
+
+    // --- V1.4 跨瀏覽器矩陣執行 (Cross-Browser Matrix) ---
+    let currentMatrixId = null;
+
+    async function createMatrixTask() {
+      const payload = currentPayload();
+      try {
+        const res = await getJson("/v1/tasks/matrix", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            title: payload.title,
+            instructions: payload.instructions,
+            priority: payload.priority || 0,
+            risk_level: payload.risk_level || "low",
+            engines: ["chromium", "firefox", "webkit"],
+            metadata: payload.metadata || {},
+          }),
+        }, "creator");
+        currentMatrixId = res.matrix_id;
+        alert(`Matrix Job Created! ID: ${res.matrix_id}\nDispatched ${res.total_tasks} tasks across Chromium, Firefox and WebKit.`);
+        await refreshAll();
+        await refreshMatrixSummary();
+      } catch (err) {
+        alert("Failed to create matrix job: " + err.message);
+      }
+    }
+
+    async function refreshMatrixSummary() {
+      if (!currentMatrixId) return;
+      try {
+        const data = await getJson(`/v1/tasks/matrix/${currentMatrixId}`, {}, "operator");
+        if ($("matrix-summary")) {
+          $("matrix-summary").textContent = `Matrix Job [${data.matrix_id}] - Total Tasks: ${data.total_tasks}`;
+        }
+        if ($("matrix-table-container") && data.tasks) {
+          $("matrix-table-container").innerHTML = `<table>
+            <thead><tr><th>Engine</th><th>Status</th><th>Verdict</th><th>Score</th><th>Self-Healed</th><th>DLP Masked</th><th>Actions</th></tr></thead>
+            <tbody>${data.tasks.map(t => `
+              <tr>
+                <td><strong>${escapeHtml(t.browser_engine.toUpperCase())}</strong></td>
+                <td><span class="status ${t.status}">${escapeHtml(t.status)}</span></td>
+                <td>${t.verdict ? `<span class="status ${t.verdict === 'pass' ? 'pass' : 'failed'}">${escapeHtml(t.verdict)}</span>` : '-'}</td>
+                <td>${t.score ?? '-'}</td>
+                <td>${t.self_healed ? 'Yes (⚡)' : 'No'}</td>
+                <td>${t.dlp_masked ? 'Shielded (🛡️)' : 'None'}</td>
+                <td><button class="secondary" onclick="currentTaskId='${t.task_id}'; refreshTask();" style="min-height:24px; padding:0 6px; font-size:11px;">Inspect</button></td>
+              </tr>
+            `).join("")}</tbody></table>`;
+        }
+      } catch (e) {}
+    }
+
+    // --- V1.4 Zero-Trust DLP 與 Cluster Federation ---
+    async function refreshDlpStatus() {
+      try {
+        const data = await getJson("/v1/ops/dlp/status", {}, "operator");
+        if ($("dlp-status")) setStatus("dlp-status", data.status === "active" ? "pass" : "warn");
+        if ($("dlp-masked-count")) $("dlp-masked-count").textContent = data.masked_elements_count ?? 0;
+        if ($("dlp-redacted-count")) $("dlp-redacted-count").textContent = data.redacted_strings_count ?? 0;
+        if ($("dlp-shield-badge")) {
+          $("dlp-shield-badge").textContent = `DLP: Shielded (${data.masked_elements_count || 0})`;
+        }
+      } catch (e) {}
+    }
+
+    async function refreshFederationTopology() {
+      try {
+        const data = await getJson("/v1/ops/federation/nodes", {}, "operator");
+        if ($("fed-cluster-status")) setStatus("fed-cluster-status", data.cluster_status === "healthy" ? "pass" : "warn");
+        if ($("fed-leader-id")) $("fed-leader-id").textContent = data.leader_node_id || "-";
+        if ($("fed-local-node")) $("fed-local-node").textContent = `${data.local_node_id} (${data.local_region})`;
+        if ($("cluster-fed-badge")) {
+          $("cluster-fed-badge").textContent = `Federation: ${data.leader_node_id === data.local_node_id ? "Leader" : "Follower"} (${data.healthy_nodes}/${data.total_nodes})`;
+        }
+        if ($("federation-nodes-list") && data.nodes) {
+          $("federation-nodes-list").innerHTML = `<table>
+            <thead><tr><th>Node ID</th><th>Region</th><th>Role</th><th>Heartbeat</th><th>Status</th></tr></thead>
+            <tbody>${data.nodes.map(n => `
+              <tr>
+                <td><strong>${escapeHtml(n.node_id)}</strong></td>
+                <td>${escapeHtml(n.region)}</td>
+                <td>${n.is_leader ? '<span class="status pass" style="font-size:10px; padding:1px 5px;">Leader</span>' : '<span class="status" style="font-size:10px; padding:1px 5px;">Follower</span>'}</td>
+                <td>${n.last_heartbeat_ago_seconds}s ago</td>
+                <td><span class="status ${n.status === 'healthy' ? 'pass' : 'warn'}">${escapeHtml(n.status)}</span></td>
+              </tr>
+            `).join("")}</tbody></table>`;
+        }
+      } catch (e) {}
+    }
+
+    async function forceFederationReelection() {
+      try {
+        const res = await getJson("/v1/ops/federation/re-election", {method: "POST"}, "admin");
+        alert(`Re-election completed! New Leader: ${res.leader_node_id}`);
+        await refreshFederationTopology();
+      } catch (err) {
+        alert("Re-election failed: " + err.message);
+      }
     }
 
     async function abortCurrentTask() {
@@ -1856,6 +2125,16 @@
     if ($("refresh-queues")) $("refresh-queues").addEventListener("click", refreshQueues);
     if ($("btn-abort-task")) $("btn-abort-task").addEventListener("click", abortCurrentTask);
     if ($("btn-sso-login")) $("btn-sso-login").addEventListener("click", initiateSsoLogin);
+
+    // V1.4 事件監聽器綁定
+    if ($("btn-pause-takeover")) $("btn-pause-takeover").addEventListener("click", pauseTakeover);
+    if ($("btn-resume-takeover")) $("btn-resume-takeover").addEventListener("click", resumeTakeover);
+    if ($("btn-send-keys")) $("btn-send-keys").addEventListener("click", sendRemoteKeys);
+    if ($("create-matrix-task")) $("create-matrix-task").addEventListener("click", createMatrixTask);
+    if ($("refresh-matrix")) $("refresh-matrix").addEventListener("click", refreshMatrixSummary);
+    if ($("refresh-dlp")) $("refresh-dlp").addEventListener("click", refreshDlpStatus);
+    if ($("refresh-federation")) $("refresh-federation").addEventListener("click", refreshFederationTopology);
+    if ($("btn-force-reelection")) $("btn-force-reelection").addEventListener("click", forceFederationReelection);
 
     renderScenario();
     renderStatusFlow("idle");

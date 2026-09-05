@@ -329,3 +329,283 @@ V1.2 每個 response 會回寫 `X-Correlation-ID`。若 request 帶入 `X-Correl
 
 - `POST /v1/skills`：需要 `admin`，註冊同 tenant SkillHub capability。
 - `GET /v1/skills`：需要 authenticated actor，列出同 tenant skills。
+
+## V1.4 雙向即時遠端接管（HITL Reverse Control Channel）
+
+### `POST /v1/tasks/{task_id}/pause`
+
+需要 `operator` 或 `admin`。線上暫停執行中之任務，切換進入 HITL（Human-in-the-Loop）人機協作模式。Worker 收到中斷請求後將懸掛自動化推進迴圈，等待人工操作。
+
+Request Body：
+```json
+{
+  "reason": "Solve cloudflare CAPTCHA"
+}
+```
+
+Response：
+```json
+{
+  "task_id": "d2b545c0-3431-4518-99ab-e703c36d66fc",
+  "paused": true,
+  "operator": "operator@example.com",
+  "reason": "Solve cloudflare CAPTCHA"
+}
+```
+
+### `POST /v1/tasks/{task_id}/interact`
+
+需要 `operator` 或 `admin`。下發遠端人機操作指令至執行中的瀏覽器實體。目前支援 `click`、`type`、`press` 三種動作。
+
+Request Body (點擊)：
+```json
+{
+  "action": "click",
+  "x": 350.5,
+  "y": 210.0
+}
+```
+
+Request Body (文字輸入)：
+```json
+{
+  "action": "type",
+  "text": "my_secure_code_123"
+}
+```
+
+Request Body (鍵盤按鍵)：
+```json
+{
+  "action": "press",
+  "key": "Enter"
+}
+```
+
+Response：
+```json
+{
+  "task_id": "d2b545c0-3431-4518-99ab-e703c36d66fc",
+  "queued": true,
+  "action": "click",
+  "operator": "operator@example.com"
+}
+```
+
+### `POST /v1/tasks/{task_id}/resume`
+
+需要 `operator` 或 `admin`。恢復暫停之任務，讓瀏覽器自動化繼續推進，並於審計歷程與任務狀態中標記 `human_intervened = true`，記錄介入耗時與操作者帳號。
+
+Response：
+```json
+{
+  "task_id": "d2b545c0-3431-4518-99ab-e703c36d66fc",
+  "resumed": true,
+  "operator": "operator@example.com"
+}
+```
+
+## V1.4 跨瀏覽器矩陣執行引擎（Cross-Browser Matrix Execution）
+
+### `POST /v1/tasks/matrix`
+
+需要 `creator` 或 `admin`。一鍵建立並派發一組跨瀏覽器核心的平行任務，自動為每個指定核心生成專屬 Task，並共享相同之 `matrix_id`。
+
+Request Body：
+```json
+{
+  "title": "Checkout Flow Cross-Browser Test",
+  "instructions": "Navigate to checkout, fill form, verify total price",
+  "priority": 1,
+  "risk_level": "low",
+  "engines": ["chromium", "firefox", "webkit"],
+  "metadata": {
+    "start_url": "https://example.com/checkout"
+  }
+}
+```
+
+Response：
+```json
+{
+  "matrix_id": "matrix-9c3f2e1a4b8d",
+  "total_tasks": 3,
+  "tasks": [
+    {
+      "task_id": "acb1ceb5-84b6-4ecf-bdcf-9c0c3d547956",
+      "browser_engine": "chromium",
+      "status": "pending_approval",
+      "title": "[Chromium] Checkout Flow Cross-Browser Test"
+    },
+    {
+      "task_id": "2893b283-9402-4d41-84c4-a8bb4499221d",
+      "browser_engine": "firefox",
+      "status": "pending_approval",
+      "title": "[Firefox] Checkout Flow Cross-Browser Test"
+    },
+    {
+      "task_id": "3655d0c8-5308-4ec0-a1a7-90dd7607e6be",
+      "browser_engine": "webkit",
+      "status": "pending_approval",
+      "title": "[Webkit] Checkout Flow Cross-Browser Test"
+    }
+  ]
+}
+```
+
+### `GET /v1/tasks/matrix/{matrix_id}`
+
+需要 authenticated actor。查詢指定矩陣批次中所有瀏覽器任務之聚合狀態、執行結果、耗時與差異化截圖。
+
+Response：
+```json
+{
+  "matrix_id": "matrix-9c3f2e1a4b8d",
+  "tasks": [
+    {
+      "task_id": "acb1ceb5-84b6-4ecf-bdcf-9c0c3d547956",
+      "browser_engine": "chromium",
+      "status": "completed",
+      "title": "[Chromium] Checkout Flow Cross-Browser Test",
+      "verdict": "pass",
+      "score": 100,
+      "self_healed": false,
+      "dlp_masked": true,
+      "human_intervened": false,
+      "video_artifact_id": "uuid-video-1",
+      "created_at": "2026-09-05T08:00:00Z",
+      "completed_at": "2026-09-05T08:00:15Z"
+    },
+    {
+      "task_id": "2893b283-9402-4d41-84c4-a8bb4499221d",
+      "browser_engine": "firefox",
+      "status": "completed",
+      "title": "[Firefox] Checkout Flow Cross-Browser Test",
+      "verdict": "pass",
+      "score": 98,
+      "self_healed": true,
+      "dlp_masked": true,
+      "human_intervened": false,
+      "video_artifact_id": "uuid-video-2",
+      "created_at": "2026-09-05T08:00:00Z",
+      "completed_at": "2026-09-05T08:00:18Z"
+    },
+    {
+      "task_id": "3655d0c8-5308-4ec0-a1a7-90dd7607e6be",
+      "browser_engine": "webkit",
+      "status": "completed",
+      "title": "[Webkit] Checkout Flow Cross-Browser Test",
+      "verdict": "pass",
+      "score": 95,
+      "self_healed": false,
+      "dlp_masked": true,
+      "human_intervened": true,
+      "video_artifact_id": "uuid-video-3",
+      "created_at": "2026-09-05T08:00:00Z",
+      "completed_at": "2026-09-05T08:00:25Z"
+    }
+  ]
+}
+```
+
+## V1.4 Zero-Trust 動態資料防洩保護（Zero-Trust Dynamic DLP）
+
+### `GET /v1/ops/dlp/status`
+
+需要 `operator` 或 `admin`。查詢當前 Zero-Trust DLP 防護服務狀態與作用中之資料脫敏與像素遮罩規則清單。
+
+Response：
+```json
+{
+  "status": "active",
+  "active_rules": [
+    "password_kv",
+    "bearer_token",
+    "jwt_pattern",
+    "openai_api_key",
+    "aws_access_key",
+    "private_key_pem",
+    "credit_card"
+  ],
+  "mask_passwords": true,
+  "redact_tokens": true,
+  "description": "Zero-Trust DLP applies CSS gaussian blur to sensitive DOM fields and redacts secrets in texts and metadata."
+}
+```
+
+## V1.4 多叢集排程同盟與容災接管（Multi-Cluster Scheduling Federation）
+
+### `GET /v1/ops/federation/nodes`
+
+需要 `operator` 或 `admin`。檢視目前同盟叢集拓撲、各節點存活狀態（healthy / degraded / offline）、心跳時間戳與主導排程節點（Leader）。
+
+Response：
+```json
+{
+  "cluster_status": "healthy",
+  "leader_node_id": "cluster-node-tokyo-01",
+  "nodes": [
+    {
+      "node_id": "cluster-node-tokyo-01",
+      "region": "ap-northeast-1",
+      "status": "online",
+      "is_leader": true,
+      "active_schedules_count": 8,
+      "last_heartbeat": 1757064000.5,
+      "seconds_since_heartbeat": 1.2
+    },
+    {
+      "node_id": "cluster-node-osaka-02",
+      "region": "ap-northeast-3",
+      "status": "online",
+      "is_leader": false,
+      "active_schedules_count": 0,
+      "last_heartbeat": 1757064001.0,
+      "seconds_since_heartbeat": 0.7
+    }
+  ]
+}
+```
+
+### `POST /v1/ops/federation/heartbeat`
+
+由排程節點或背景調度器定期（預設每 5 秒）調用，向同盟註冊中心發送心跳並回報活躍排程數。
+
+Request Body：
+```json
+{
+  "node_id": "cluster-node-tokyo-01",
+  "region": "ap-northeast-1",
+  "active_schedules_count": 8,
+  "metadata": {"cpu_usage": 0.25, "memory_usage": 0.42}
+}
+```
+
+Response：
+```json
+{
+  "node_id": "cluster-node-tokyo-01",
+  "registered": true,
+  "is_leader": true
+}
+```
+
+### `POST /v1/ops/federation/re-election`
+
+需要 `admin` 角色。強制轉移同盟領導權，將 Leader 角色重派至指定備援節點，用於演練維護或跨區域容災接管。
+
+Request Body：
+```json
+{
+  "target_node_id": "cluster-node-osaka-02"
+}
+```
+
+Response：
+```json
+{
+  "re_elected": true,
+  "leader_node_id": "cluster-node-osaka-02",
+  "actor": "admin@example.com"
+}
+```

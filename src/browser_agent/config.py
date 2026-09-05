@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "browser-agent"
-    app_version: str = "1.3.0"
+    app_version: str = "1.4.0"
     app_env: str = "local"
     app_log_level: str = "INFO"
     app_secret_key: str = "change-me"
@@ -54,6 +54,25 @@ class Settings(BaseSettings):
     live_broadcast_enabled: bool = True
     self_healing_enabled: bool = True
     self_healing_threshold: float = 0.75
+
+    # V1.4 雙向即時遠端接管 (HITL)
+    remote_takeover_enabled: bool = True
+    remote_takeover_timeout_seconds: int = 300
+
+    # V1.4 跨瀏覽器矩陣執行 (Cross-Browser Grid)
+    default_browser_engine: str = "chromium"  # "chromium" | "firefox" | "webkit"
+
+    # V1.4 零信任動態情境資料防洩 (Zero-Trust DLP)
+    dlp_enabled: bool = True
+    dlp_mask_passwords: bool = True
+    dlp_redact_tokens: bool = True
+
+    # V1.4 多叢集排程同盟與高可用容災 (Multi-Cluster Federation)
+    federation_enabled: bool = True
+    federation_node_id: str = "node-local-1"
+    federation_region: str = "local-dev"
+    federation_heartbeat_interval_seconds: int = 10
+    federation_lease_ttl_seconds: int = 30
 
     allowlist_domains: str = "example.com,example.org"
     task_create_rate_limit_per_minute: int = 60

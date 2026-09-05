@@ -39,6 +39,8 @@ def wait_for_database(max_attempts: int = 30, delay_seconds: float = 2.0):
         try:
             engine = get_engine()
             Base.metadata.create_all(bind=engine)
+            import subprocess
+            subprocess.run(["alembic", "upgrade", "head"], check=False)
             return engine
         except Exception as exc:
             last_error = exc

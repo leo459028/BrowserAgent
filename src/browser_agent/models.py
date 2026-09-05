@@ -57,6 +57,13 @@ class Task(Base):
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     correlation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+    # V1.4 擴充欄位
+    browser_engine: Mapped[str] = mapped_column(Text, nullable=False, default="chromium")
+    matrix_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    human_intervened: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    dlp_masked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
@@ -64,6 +71,18 @@ class Task(Base):
     scheduled_task = relationship("ScheduledTask", back_populates="tasks")
     steps = relationship("TaskStep", back_populates="task", cascade="all, delete-orphan")
     artifacts = relationship("TaskArtifact", back_populates="task", cascade="all, delete-orphan")
+
+class ClusterNode(Base):
+    __tablename__ = "cluster_nodes"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    region: Mapped[str] = mapped_column(Text, nullable=False, default="default")
+    is_leader: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="healthy")
+    last_heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    active_schedules_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 class ScheduledTask(Base):
     __tablename__ = "scheduled_tasks"

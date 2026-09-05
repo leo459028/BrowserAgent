@@ -4,11 +4,18 @@
 
 ## 摘要
 
-Repository 目前已完成 **V1.3：Enterprise OIDC SSO, Session KMS Vault, Selector Self-Healing, Priority Queues, Live Telemetry Stream & Helm Chart**。此版本在 V1.2 的基礎上（Scheduled Tasks、Session Vault、Video Replay、OTLP Exporter、K8s/KEDA）新增了：完整 Enterprise OIDC Authorization Code Flow SSO（PKCE、state 防偽、`ba_session` HttpOnly Cookie）、Session Vault 企業級 KMS 信封加密（Local / AWS KMS / Vault 驅動、AES-256-GCM、AAD 租戶隔離、金鑰輪換）、啟發式選擇器自我修復引擎（Heuristic Self-Healing，三級 Fallback Cascade、DOM 特徵比對、自癒標籤）、多優先權加權佇列分流與 Worker 資源池隔離（High/Queued/Batch 路由、`/v1/ops/queues`）、瀏覽器即時畫面 WebSocket 廣播串流與線上中斷（`WS /v1/tasks/{id}/live-stream`、`POST /v1/tasks/{id}/abort`）、Enterprise Helm 3 Chart 套件（`deploy/helm/browser-agent/`）與 GitOps ArgoCD 藍圖，以及 Operations Center V1.3 集中營運介面。
+Repository 目前已完成 **V1.4：Bidirectional Remote Takeover (HITL), Cross-Browser Matrix Execution (Chromium/Firefox/WebKit), Zero-Trust Dynamic DLP, Multi-Cluster Federation & Operations Center V1.4**。此版本在 V1.3 的基礎上（OIDC SSO、Session KMS Vault、Selector Self-Healing、Priority Queues、Live Stream、Helm Chart）新增了：雙向即時遠端接管（HITL 反向操作通道、線上暫停/恢復、鍵盤與點擊事件注入、歷程審計）、跨瀏覽器矩陣執行引擎（Chromium / Firefox / WebKit 三大核心支援、一鍵矩陣派發、跨引擎差異對比）、Zero-Trust 動態資料防洩保護（CSS 高斯模糊遮罩、Bearer Token / API Key 正則動態脫敏、Metadata 遞迴過濾）、多叢集排程同盟與容災接管（心跳租約維持、Leader Election、腦裂防護、強制重選 API）、以及 Operations Center V1.4 集中營運介面。
 
 ## 已完成
 
-- `GET /operations`：`Browser Agent Operations Center`（V1.3），整合 SSO 登入按鈕、Live Telemetry Stream 畫布、Abort 任務終止按鈕、KMS 狀態指標卡、Queues 監控面板、Self-Healing 綠色標籤、Scheduled Tasks 面板、Session Vault 面板、Video 播放器、Trace Inspector 與 Visual Step Replay。
+- `GET /operations`：`Browser Agent Operations Center`（V1.4），擴充 DLP 資料防洩狀態徽章、同盟叢集節點徽章、瀏覽器核心選擇下拉選單、矩陣任務一鍵派發、雙向即時接管操控面板（Pause / Resume / Key Input / Canvas Click）、跨瀏覽器聚合比較面板、DLP 防護面板與多叢集同盟拓撲檢視器。
+- `POST /v1/tasks/{id}/pause`、`POST /v1/tasks/{id}/interact`、`POST /v1/tasks/{id}/resume`：雙向即時遠端接管（HITL Reverse Control Channel），支援線上暫停自動化流程、由前端下發滑鼠點擊（`click`）與鍵盤按鍵輸入（`type` / `press`）至執行中瀏覽器，恢復時自動審計介入總耗時並標記 `human_intervened = True`。
+- `POST /v1/tasks/matrix` 與 `GET /v1/tasks/matrix/{matrix_id}`：跨瀏覽器矩陣執行引擎，支援一鍵向 Chromium、Firefox、WebKit 同時派發任務，並於 Operations Center 聚合比對各核心之執行耗時、評估 Verdict、DOM 自癒表現與截圖差異。
+- `src/browser_agent/services/browser.py`：多瀏覽器核心原生啟動架構（支援 `playwright.chromium`, `playwright.firefox`, `playwright.webkit`），並於背景定時消費反向操作隊列與注入 DLP 樣式。
+- `src/browser_agent/services/dlp.py` 與 `GET /v1/ops/dlp/status`：Zero-Trust 動態資料防洩服務，自動為 `password` 等敏感欄位注入 CSS 高斯模糊像素遮罩（`filter: blur(8px)`），即時過濾 Bearer Token、JWT、API Keys 正則特徵，並遞迴過濾 Metadata 與產物。
+- `src/browser_agent/services/federation.py`、`GET /v1/ops/federation/nodes`、`POST /v1/ops/federation/heartbeat`、`POST /v1/ops/federation/re-election`：多叢集排程同盟管理器，支援節點定時心跳、分散式 Leader 租約過期自動晉升、腦裂防護與管理員強制重選。
+- `alembic/versions/0004_v14_federation_and_matrix.py`：資料庫遷移腳本，建立 `cluster_nodes` 資料表並於 `tasks` 表擴充 `browser_engine`、`matrix_id`、`human_intervened`、`dlp_masked` 欄位。
+- `deploy/helm/browser-agent/`：Enterprise Helm 3 Chart 升級為 `1.4.0`，values.yaml 預設加入 V1.4 DLP、同盟、跨瀏覽器與 HITL 配置項。
 - `GET /v1/auth/oidc/login` 與 `GET /v1/auth/oidc/callback`：完整 Enterprise OIDC Authorization Code Flow SSO，支援高強度隨機 PKCE 碼、防偽 state 驗證、JWT 簽名校驗與 HttpOnly `ba_session` 安全 Cookie 治理。
 - `src/browser_agent/crypto/kms.py`：企業級 KMS 信封加密引擎，支援 `LocalKmsProvider`、`AwsKmsProvider` 與 `VaultKmsProvider`，隨機生成 256-bit DEK，以 AES-256-GCM 加密，並以 `tenant_id` 作為 AAD 實現強多租戶防篡改隔離。
 - `GET /v1/ops/kms/status` 與 `GET /v1/sessions/{session_name}/validate`：KMS 即時加解密迴路健康檢測，與指定 Session 憑證解密完整性即時校驗。
@@ -36,12 +43,11 @@ Repository 目前已完成 **V1.3：Enterprise OIDC SSO, Session KMS Vault, Sele
 - `GET /v1/artifacts/{artifact_id}/content` 支援 local 與 S3。
 - `POST /v1/dlq/tasks/bulk-replay` 與 `POST /v1/dlq/tasks/{task_id}/quarantine`。
 - `GET /v1/tasks/{task_id}/replay`：擴充 `video_artifact_id`、`video_url`、`steps_visual`、`screenshot_url`、`trace_id`、`evaluation_summary`，向下相容保留 `timeline`。
-- 全套測試：**96 passed**（涵蓋 18 個測試模組，零失敗，包含 KMS 加解密、自癒引擎、優先佇列路由、Live WebSocket、Abort、OIDC SSO、Session 驗證、Helm Chart 結構與全部向後相容測試）。
+- 全套測試：**104 passed**（涵蓋 19 個測試模組，零失敗，包含 HITL 雙向接管、跨瀏覽器矩陣、Zero-Trust DLP 遮罩脫敏、多叢集同盟搶鎖容災、KMS 加解密、自癒引擎、優先佇列路由、Live WebSocket、Abort、OIDC SSO、Session 驗證、Helm Chart 結構與全部向後相容測試）。
 
-## 尚未完成 / 未來規劃候選
+## 尚未完成 / 未來規劃候選 (V1.5+)
 
-- 多區域多叢集 Active-Active 排程調度與跨資料中心容災同步（Multi-Region Federation）。
-- 雙向即時遠端接管與調試控制台（Interactive Remote Takeover / Human-in-the-Loop WebRTC Console）。
-- 基於多模態視覺大模型的深度語意理解與自適應行動規劃（VLM Semantic DOM Comprehension）。
-- 自動生成式跨瀏覽器相容性測試矩陣（Cross-Browser Grid Matrix Execution）。
-- 零信任端點設備指紋與動態情境訪問控制（Zero-Trust Device Fingerprinting）。
+- WebRTC 低延遲雙向音畫流與遠端多游標拖曳協同控制台（Interactive Remote Desktop WebRTC Console）。
+- 智慧型動態流量感知自適應重試策略（Adaptive Backoff with Jitter & Circuit Breaker Pattern）。
+- 基於多模態視覺模型（本地部署 Small VLM）的深度語意理解與自適應行動規劃。
+- 零信任端點設備指紋與動態情境訪問控制（Zero-Trust Device Fingerprinting & Contextual Access Control）。

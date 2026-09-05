@@ -1,6 +1,6 @@
 # Runbook
 
-本 runbook 說明如何在本機 Docker Compose、Kubernetes 與 Helm 3 驗證 V1.3 Operations Center、OIDC SSO、KMS 信封加密、多優先權佇列、WebSocket Live Stream、線上 Abort、選擇器自癒與 production 配置。
+本 runbook 說明如何在本機 Docker Compose、Kubernetes 與 Helm 3 驗證 V1.4 Operations Center、雙向即時遠端接管（HITL）、跨瀏覽器矩陣執行、Zero-Trust 動態資料防洩、多叢集排程同盟與容災接管、OIDC SSO、KMS 信封加密與 production 配置。
 
 ## 1. 啟動 Stack
 
@@ -9,7 +9,7 @@ copy .env.example .env
 docker compose up -d --build
 ```
 
-執行資料庫遷移：
+執行資料庫遷移（包含 V1.4 `0004_v14_federation_and_matrix`）：
 ```powershell
 docker compose exec -T api alembic upgrade head
 ```
@@ -30,20 +30,23 @@ http://127.0.0.1:8000/operations
 
 應看到：
 
-- `Browser Agent Operations Center`（V1.3）
-- 頂部狀態列：K8s Mode、OTLP Exporter 與 SSO Login 按鈕
+- `Browser Agent v1.4 Operations Center (維運中心)`（包含相容標籤 `Browser Agent v1.2 Operations Center compatible`）
+- 頂部狀態列：K8s Mode、OTLP Exporter、**DLP Shield（動態防洩徽章）、Cluster Fed（同盟拓撲徽章）**與 SSO Login 按鈕
+- `Create Task` 卡片：包含 **Browser Engine 選擇下拉選單（Chromium, Firefox, WebKit）**、DLP 保護勾選框與 **`Dispatch Matrix (3 Engines)` 矩陣派發按鈕**
+- `Live Telemetry Stream` 卡片：WebSocket 畫面畫布、Abort Task 按鈕，以及 **V1.4 雙向接管控制條（`Pause (Takeover)`, `Resume Task`, `Send Keys`, `Key Input`, `Takeover Status`）**
+- `Cross-Browser Matrix Comparison` 面板：聚合檢視跨 Chromium/Firefox/WebKit 執行結果、差異化對比與自癒指標
+- `Zero-Trust Dynamic DLP Status` 面板：動態像素遮罩規則、正則過濾清單與防洩統計
+- `Multi-Cluster Scheduling Federation Topology` 面板：檢視叢集各區域節點存活心跳、Leader 租約與一鍵強制重選
 - `Scheduled Tasks` 卡片（Cron 定時巡檢、建立排程、即時手動觸發）
 - `Session Vault` 卡片（儲存的工作階段、KMS 信封加密指示、一鍵 Validate 與 Revoke）
-- `Live Telemetry Stream` 卡片（WebSocket 低延遲 JPEG 畫面廣播畫布與 Abort Task 按鈕）
 - `Priority Queues Telemetry` 卡片（High, Queued, Batch 深度即時監控）
 - `KMS Envelope Encryption Engine` 卡片（Provider, Key ID, 演算法與加解密延遲）
 - `Video Replay` 卡片（內建 HTML5 WebM 播放器，隨選隨放瀏覽器錄影）
 - `Production Alerting Center`（7 大規則狀態、Webhook 狀態指示、Test Dispatch）
 - `Trace Inspector`（分散式追蹤 Trace ID 查詢與 Span 樹狀檢視）
-- `Operations Readiness`
-- `Production Readiness`
-- `Observability`
-- `Visual Step Replay & Replay Timeline`（含綠色自癒標籤）
+- `Operations Readiness`、`Production Readiness`、`Observability`
+- `Visual Step Replay & Replay Timeline`（含綠色自癒標籤與人機介入審計）
+
 
 ## 3. Auth Smoke
 
@@ -151,6 +154,28 @@ Invoke-RestMethod -Method Get `
 2. 若需緊急中斷，點選紅色的 **`Abort Task`** 按鈕（呼叫 `POST /v1/tasks/{id}/abort`）。
 3. Worker 即時捕獲中止信號，安全釋放 Playwright 資源，任務狀態轉為 `aborted`。
 
+## 6.3 雙向即時遠端接管（HITL）人工協作演練
+
+1. 當執行中之任務遇到複雜驗證碼或需要人為干預時，在 `Live Telemetry Stream` 卡片點擊橘色 **`Pause (Takeover)`** 按鈕（呼叫 `POST /v1/tasks/{id}/pause`）。
+2. 接管狀態徽章轉為橘色 `PAUSED (TAKEOVER)`，Worker 暫停自動化推進。
+3. **滑鼠操作**：直接在即時畫面 Canvas 上點選目標元素位置，前端自動計算座標並調用 `POST /v1/tasks/{id}/interact` 派發 `click` 動作，Worker 即時向 Playwright 注入點擊。
+4. **文字輸入**：在 `Remote Key Input` 文字框輸入需填入之文字或驗證碼，點選 **`Send Keys`** 按鈕下發 `type` 動作。
+5. 人工處理完成後，點擊綠色 **`Resume Task`** 按鈕（呼叫 `POST /v1/tasks/{id}/resume`）。
+6. Worker 退出暫停迴圈繼續執行，自動將人機介入總時間與操作者紀錄至 `task.human_intervened = True` 與 Audit Log。
+
+## 6.4 跨瀏覽器矩陣執行與差異比對演練
+
+1. 在 `Create Task` 卡片輸入測試任務標題與操作說明。
+2. 點擊藍色 **`Dispatch Matrix (3 Engines)`** 按鈕（呼叫 `POST /v1/tasks/matrix`），系統自動平行生成 Chromium、Firefox、WebKit 三筆任務並共享同一 `matrix_id`。
+3. 在左側任務列表批次核准後，Worker 資源池同時啟動不同瀏覽器內核獨立執行。
+4. 任務完成後，在下方 **`Cross-Browser Matrix Comparison`** 面板檢視矩陣聚合狀態，比對三種瀏覽器核心之執行耗時、評估 Verdict、DOM 自癒情形與截圖產物。
+
+## 6.5 Zero-Trust DLP 動態防洩與多叢集同盟容災演練
+
+1. **DLP 狀態驗證**：在 **`Zero-Trust Dynamic DLP Status`** 面板檢視防護狀態，確認密碼高斯模糊遮罩（`filter: blur(8px)`）與 Bearer Token / API Key 正則過濾規則均處於 `active`。
+2. **多叢集同盟拓撲**：在 **`Multi-Cluster Scheduling Federation Topology`** 面板可檢視跨區域節點心跳時間戳、活躍排程數與當前 Leader 節點。
+3. **同盟容災主從切換（Failover）**：點選備援節點旁的 **`Force Re-election`** 按鈕（呼叫 `POST /v1/ops/federation/re-election`），系統即刻強制將 Leader 排程租約轉移至備援節點，達成零停機高可用切換。
+
 ## 7. DLQ Operations
 
 - `Refresh DLQ`：查 failed DLQ tasks。
@@ -168,8 +193,8 @@ Invoke-RestMethod -Method Post `
 
 ## 8. 維運疑難排解與升級說明
 
-### 既有版本升級至 V1.3
-- 執行資料庫遷移確認最新 schema：
+### 既有版本升級至 V1.4
+- 執行資料庫遷移確認最新 schema（含 `0004_v14_federation_and_matrix.py`）：
   ```powershell
   alembic upgrade head
   ```
@@ -177,6 +202,7 @@ Invoke-RestMethod -Method Post `
   ```powershell
   docker compose up -d --build api worker
   ```
+
 
 ### Kafka / Zookeeper Stale Session 處理
 若容器重啟時出現 `NodeExists` 或 Zookeeper session timeout 導致 Kafka 退出，請重啟相依服務：
