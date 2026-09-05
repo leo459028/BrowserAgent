@@ -8,7 +8,7 @@ import uuid
 from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import APIRouter, Body, Depends, FastAPI, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi import Request
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -19,7 +19,19 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from .config import get_settings
 from .db import get_session_factory
 from . import models
-from .auth import ActorContext, create_access_token, local_dev_actor_for_role, get_current_actor, require_roles
+from .auth import (
+    ActorContext,
+    create_access_token,
+    local_dev_actor_for_role,
+    get_current_actor,
+    require_roles,
+    generate_oidc_pkce,
+    build_oidc_auth_url,
+    exchange_oidc_code_for_token,
+)
+from .crypto.kms import get_kms_provider, decrypt_session_vault_payload
+from .services.live_telemetry import get_telemetry_broadcaster
+
 from .schemas import (
     AlertTestDispatchRequest,
     DlqBulkReplayRequest,
@@ -1196,8 +1208,62 @@ def list_sessions(
                 "uri": a.uri,
                 "backend": meta.get("backend", "local"),
                 "status": meta.get("status", "valid"),
+                "encryption": meta.get("encryption") or {"encrypted": False, "algorithm": "none"},
             }
     return list(sessions_by_name.values())
+
+
+@router.post("/v1/sessions/{session_name}/validate")
+def validate_session(
+    session_name: str,
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    stmt = (
+        select(models.TaskArtifact)
+        .join(models.Task, models.Task.id == models.TaskArtifact.task_id)
+        .where(
+            models.Task.tenant_id == actor.tenant_id,
+            models.TaskArtifact.artifact_type == "storage_state",
+        )
+        .order_by(models.TaskArtifact.created_at.desc())
+    )
+    artifacts = session.execute(stmt).scalars().all()
+    target_art = None
+    for a in artifacts:
+        meta = a.metadata_ or {}
+        if meta.get("session_name") == session_name:
+            target_art = a
+            break
+
+    if not target_art:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    settings = get_settings()
+    artifact_store = build_artifact_store_from_settings(settings)
+    try:
+        raw_bytes = artifact_store.read_bytes(target_art.uri)
+        decrypted = decrypt_session_vault_payload(
+            raw_bytes,
+            target_art.metadata_ or {},
+            tenant_id=str(actor.tenant_id),
+        )
+        cookies = decrypted.get("cookies", [])
+        return {
+            "valid": True,
+            "session_name": session_name,
+            "cookies_count": len(cookies),
+            "encryption": (target_art.metadata_ or {}).get("encryption") or {"encrypted": False},
+            "status": "valid",
+        }
+    except Exception as exc:
+        return {
+            "valid": False,
+            "session_name": session_name,
+            "error": str(exc),
+            "status": "invalid",
+        }
+
 
 
 @router.delete("/v1/sessions/{session_name}")
@@ -1275,10 +1341,167 @@ def flush_otlp_spans(actor: ActorContext = Depends(require_roles("admin"))):
     return {"flushed": True, "result": res, "status": exporter.status()}
 
 
+# --- V1.3 OIDC Authorization Code Flow 端點 ---
+
+_OIDC_PKCE_STORE: dict[str, tuple[str, float]] = {}
+
+@router.get("/v1/auth/oidc/login")
+def oidc_login():
+    """發起 OIDC SSO 導頁，生成 PKCE 與 state 並重導向至 IdP 授權端點"""
+    settings = get_settings()
+    state, verifier, challenge = generate_oidc_pkce()
+    # 暫存 state 與 verifier (TTL 300s)
+    now = time.time()
+    _OIDC_PKCE_STORE[state] = (verifier, now + 300)
+
+    auth_url = build_oidc_auth_url(settings, state, challenge)
+    return {
+        "redirect_url": auth_url,
+        "state": state,
+        "auth_url": auth_url,
+    }
+
+
+@router.get("/v1/auth/oidc/callback")
+def oidc_callback(code: str, state: str, response: Response):
+    """處理 IdP 授權回調，交換 Token 並寫入 HttpOnly Session Cookie"""
+    settings = get_settings()
+    verifier_info = _OIDC_PKCE_STORE.pop(state, None)
+    verifier = verifier_info[0] if verifier_info and verifier_info[1] > time.time() else ""
+
+    token_claims = exchange_oidc_code_for_token(settings, code, verifier)
+
+    email = token_claims.get("email") or "sso.user@example.com"
+    roles = token_claims.get("roles") or ["operator"]
+    sub_id = token_claims.get("sub") or str(uuid.uuid4())
+
+    actor = ActorContext(
+        user_id=uuid.UUID(str(sub_id)),
+        tenant_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        email=email,
+        roles=tuple(roles),
+    )
+    access_token = create_access_token(actor, settings=settings)
+
+    # 設置 HttpOnly 安全 Session Cookie
+    response.set_cookie(
+        key="ba_session",
+        value=access_token,
+        httponly=True,
+        samesite="lax",
+        secure=False,  # 本機/開發環境相容
+        max_age=settings.auth_token_ttl_seconds,
+    )
+    return {
+        "authenticated": True,
+        "email": email,
+        "roles": list(roles),
+        "message": "OIDC login successful, ba_session cookie set",
+        "redirect": "/operations",
+    }
+
+
+@router.post("/v1/auth/logout")
+def oidc_logout(response: Response):
+    """清除前端 Session Cookie"""
+    response.delete_cookie(key="ba_session")
+    return {"logged_out": True, "message": "Session cookie cleared"}
+
+
+# --- V1.3 KMS 信封加密與佇列狀態端點 ---
+
+@router.get("/v1/ops/kms/status")
+def get_kms_status(actor: ActorContext = Depends(require_roles("operator", "admin"))):
+    """取得當前 Session Vault 之 KMS 信封加密狀態"""
+    settings = get_settings()
+    provider = get_kms_provider(settings)
+    return provider.status()
+
+
+@router.get("/v1/ops/queues")
+def get_queues_status(actor: ActorContext = Depends(require_roles("operator", "admin"))):
+    """檢視多優先權佇列與 Worker 資源池配置"""
+    settings = get_settings()
+    return {
+        "multi_priority_enabled": getattr(settings, "multi_priority_enabled", True),
+        "worker_pool": getattr(settings, "worker_pool", "default"),
+        "topics": {
+            "high": getattr(settings, "queue_high_topic", "agent.tasks.high"),
+            "default": getattr(settings, "queue_default_topic", "agent.tasks.queued"),
+            "batch": getattr(settings, "queue_batch_topic", "agent.tasks.batch"),
+            "dlq": getattr(settings, "dlq_topic", "agent.tasks.dlq"),
+        },
+        "status": "healthy",
+    }
+
+
+# --- V1.3 即時畫面廣播 (Live Stream) 與中斷 (Abort) 端點 ---
+
+@router.get("/v1/tasks/{task_id}/live-frame")
+def get_task_live_frame(
+    task_id: str,
+    actor: ActorContext = Depends(require_roles("creator", "approver", "operator", "admin")),
+):
+    """取得執行中任務的最新單一畫面幀（供輪詢或降級檢視）"""
+    broadcaster = get_telemetry_broadcaster()
+    frame = broadcaster.get_latest_frame(task_id)
+    if not frame:
+        return {"task_id": task_id, "frame_available": False, "message": "No active live frame"}
+    return {"task_id": task_id, "frame_available": True, **frame}
+
+
+@router.post("/v1/tasks/{task_id}/abort")
+def abort_task_execution(
+    task_id: str,
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    """維運人員緊急中斷正在執行中之任務"""
+    task = session.get(models.Task, uuid.UUID(task_id))
+    if not task or task.tenant_id != actor.tenant_id:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    broadcaster = get_telemetry_broadcaster()
+    broadcaster.request_abort(task_id, reason=f"Aborted by {actor.email}")
+
+    write_audit(
+        session,
+        actor.tenant_id,
+        actor.email,
+        "task.abort_requested",
+        "task",
+        task_id,
+        {"requested_by": actor.email},
+    )
+    session.commit()
+    return {"aborted": True, "task_id": task_id, "message": "Abort signal dispatched to worker"}
+
+
+@router.websocket("/v1/tasks/{task_id}/live-stream")
+async def task_live_stream(websocket: WebSocket, task_id: str):
+    """WebSocket 雙向/低延遲畫面幀廣播端點"""
+    await websocket.accept()
+    broadcaster = get_telemetry_broadcaster()
+    queue = await broadcaster.subscribe(task_id)
+    try:
+        while True:
+            payload = await queue.get()
+            await websocket.send_json(payload)
+            if payload.get("type") == "aborted":
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.debug("Live stream websocket client closed: %s", exc)
+    finally:
+        await broadcaster.unsubscribe(task_id, queue)
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(getattr(settings, "app_log_level", "INFO"))
-    app = FastAPI(title=getattr(settings, "app_name", "browser-agent"), version=getattr(settings, "app_version", "1.2.0"))
+    app = FastAPI(title=getattr(settings, "app_name", "browser-agent"), version=getattr(settings, "app_version", "1.3.0"))
+
 
     @app.middleware("http")
     async def correlation_middleware(request: Request, call_next):

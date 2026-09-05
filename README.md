@@ -1,6 +1,6 @@
 # BrowserAgent
 
-BrowserAgent 是 enterprise browser agent platform 的 **V1.2：Enterprise Session Vault, Task Scheduling, OTLP Streaming & Video Replay**。目前版本把瀏覽器自動化、人工審核、執行紀錄、artifact 保存、失敗任務處理、定時排程巡檢、工作階段保險箱、全行程影片錄製與 production readiness 檢查整合在一起，讓團隊可以用比較接近營運後台的方式管理 browser agent 工作流。
+BrowserAgent 是 enterprise browser agent platform 的 **V1.3：Enterprise OIDC SSO, Session KMS Vault, Selector Self-Healing, Priority Queues, Live Telemetry Stream & Helm Chart**。目前版本把瀏覽器自動化、人工審核、執行紀錄、artifact 保存、失敗任務處理、定時排程巡檢、工作階段保險箱、全行程影片錄製與 production readiness 檢查整合在一起，讓團隊可以用比較接近營運後台的方式管理 browser agent 工作流。
 
 ## 一般版
 
@@ -8,7 +8,7 @@ BrowserAgent 是 enterprise browser agent platform 的 **V1.2：Enterprise Sessi
 
 BrowserAgent 可以把「需要人打開網站、登入系統、查資料、截圖、留下證據」這類工作，整理成可以建立、審核、執行、追蹤與回放的任務流程。
 
-它不是單純的瀏覽器腳本，也不是只在工程師電腦上跑一次的測試工具。V1.2 的重點是 **Operations Center + 無人值守排程巡檢 + Session Vault + 視訊回放**：讓 operator 可以在同一個頁面查看系統是否準備好、production-like 設定是否安全、任務目前跑到哪裡、產生了哪些 artifacts、誰核准過、哪一步失敗、失敗任務能不能 replay，必要時也可以 quarantine 問題任務。
+它不是單純的瀏覽器腳本，也不是只在工程師電腦上跑一次的測試工具。V1.3 的重點是 **Operations Center + 無人值守排程巡檢 + Session Vault + 視訊回放**：讓 operator 可以在同一個頁面查看系統是否準備好、production-like 設定是否安全、任務目前跑到哪裡、產生了哪些 artifacts、誰核准過、哪一步失敗、失敗任務能不能 replay，必要時也可以 quarantine 問題任務。
 
 簡單說，它適合拿來做「可被人管理的 browser agent」。瀏覽器負責執行重複性網頁操作，人負責審核高風險任務、看結果、追蹤紀錄與處理例外。
 
@@ -28,7 +28,7 @@ BrowserAgent 的設計方向是把這些流程變成可管理的 task lifecycle�
 
 ### Operations Center 可以看到什麼？
 
-V1.2 的主要入口是：
+V1.3 的主要入口是：
 
 ```text
 http://localhost:8000/operations
@@ -74,18 +74,18 @@ BrowserAgent 目前還不是可以放心接管所有網頁操作的完整平台�
 - 不適合處理未授權的個資、病歷、財務資料、客戶機密、商業秘密或大量敏感資料。
 - 不適合拿來做大規模外部網站抓取、競品監控或任何可能造成對方服務負載的行為，除非已取得明確授權。
 - 不適合當成完整 RPA 平台；它目前聚焦在 browser agent task、審核、紀錄、artifact 與營運回放。
-- 不適合當成完整企業登入系統；V1.2 支援 local dev token、JWKS token 驗證與 OIDC discovery，但不包含完整 IdP login flow。
+- 不適合當成完整企業登入系統；V1.3 支援 local dev token、JWKS token 驗證、OIDC discovery 與 OIDC Code Flow SSO，但各企業仍需對齊專屬帳號目錄。
 - 不適合當成正式 secrets vault、完整資安控管平台或全代管雲端平台。
 
-### V1.2 目前限制
+### V1.3 目前限制
 
-- 目前提供 Docker Compose 與 Kubernetes Kustomize 生產配置，正式雲端上線仍需搭配企業專屬之 ingress 與 secret 管理機制。
-- `/operations` 是 V1.2 的營運入口；它可以查詢與操作核心流程，不等於完整企業級大型後台。
-- local dev token 只適合本機開發與測試；production-like 設定應使用 `AUTH_MODE=jwks`，並搭配 `AUTH_JWKS_URL` 或 `AUTH_OIDC_ISSUER_URL`。
-- Replay Timeline 提供 audit、steps、artifacts、evaluation 與 WebM 視訊回放，視訊錄影需注意磁碟空間與 retention policy。
-- Artifact backend 支援 local 與 MinIO/S3；retention、redaction 目前以 metadata 與生命週期標記表達。
-- Planner 目前偏 Heuristic 驗證與 metadata 補強，不是完整外部 LLM agent planner。
-- SkillHub 目前聚焦 resolver metadata，不代表已經能安全執行任意第三方 skill。
+- 目前提供 Docker Compose、Kubernetes Kustomize 與 Enterprise Helm 3 Chart 套件，正式雲端上線仍需搭配企業專屬之 ingress 與 secret 管理機制。
+- `/operations` 是 V1.3 的營運入口；它可以查詢與操作核心流程，不等於完整企業級大型後台。
+- local dev token 只適合本機開發與測試；production-like 設定應使用 `AUTH_MODE=jwks`，並搭配 `AUTH_JWKS_URL` 或 `AUTH_OIDC_ISSUER_URL` 與 OIDC Code Flow。
+- Replay Timeline 提供 audit、steps、artifacts、evaluation、WebM 視訊回放與 WebSocket 即時畫面串流，錄影檔需注意磁碟空間與 retention policy。
+- Session Vault KMS 信封加密支援 Local、AWS KMS 與 HashiCorp Vault 驅動，企業正式環境需配置真實雲端金鑰。
+- 選擇器自我修復採用多維 DOM 特徵相似度啟發式演算法（Heuristic），未引入外部不可控大型視覺 LLM。
+- WebSocket 即時串流為單向畫面幀廣播，尚未開放遠端直接操控滑鼠鍵盤之互動控制台。
 - 高風險操作仍應保留人為審核、權限分層、測試環境驗證與公司內部安全流程。
 
 ### 快速啟動
@@ -112,21 +112,26 @@ curl.exe http://localhost:8000/readyz
 
 ### 主要能力
 
-- **FastAPI Control Plane**：Auth、task、approval、artifact、SkillHub、readiness、alerts、traces、DLQ、scheduled tasks、session vault、video replay、OTLP exporter APIs。
+- **FastAPI Control Plane**：Auth（Local/JWKS/OIDC Code Flow）、task、approval、artifact、SkillHub、readiness、alerts、traces、DLQ、scheduled tasks、session vault、video replay、OTLP exporter、KMS status、queues telemetry、live stream、abort APIs。
+- **OIDC Authorization Code Flow SSO**：標準 OIDC PKCE 授權碼交換、防偽 state 驗證、HttpOnly `ba_session` Cookie 治理與前端 SSO 一鍵登入。
+- **Session Vault 企業級 KMS 信封加密**：支援 Local、AWS KMS 與 HashiCorp Vault 驅動，採用 AES-256-GCM 驗證加密，`tenant_id` 作為 AAD 防跨租戶置換攻擊，支援 `/v1/sessions/{name}/validate` 完整性校驗與金鑰輪換。
+- **啟發式選擇器自我修復引擎（Heuristic Self-Healing）**：三級 Fallback Cascade（語意標籤、標籤文字、DOM 結構特徵），動態比對標籤相似度（閾值 0.6），修復成功自動標記 `task.self_healed` 並於 UI 顯示綠色自癒標記。
+- **多優先權加權佇列與 Worker 資源池隔離**：支援 `agent.tasks.high`、`agent.tasks.queued`、`agent.tasks.batch` 主題分流路由，專屬 Worker Pool 訂閱隔離，提供 `/v1/ops/queues` 即時監控。
+- **瀏覽器即時畫面 WebSocket 廣播串流與線上中斷**：`WS /v1/tasks/{id}/live-stream` 提供 low-latency JPEG 畫面幀串流廣播，支援 `POST /v1/tasks/{id}/abort` 即時線上中斷異常任務並安全釋放 Playwright 資源。
+- **Enterprise Helm 3 Chart 套件與 GitOps ArgoCD 藍圖**：提供完整 `deploy/helm/browser-agent/`（Chart.yaml, values.yaml, templates）與 `deploy/gitops/argocd-application.yaml` 自動化交付藍圖。
 - **Scheduled Tasks 調度引擎**：標準 5 欄位 Cron 表達式解析、分散式 Redis 鎖（TTL 55s）、任務防重入（concurrency_policy: skip/allow）、手動立即觸發與背景自動巡檢。
-- **Session Vault (Storage State)**：Playwright Cookies 與 localStorage 狀態封裝為 `storage_state` Artifact，自動跨任務注入免重複登入、租戶隔離、狀態過期與一鍵撤銷保護。
 - **Video Replay 全行程視訊錄製**：Playwright WebM 全螢幕執行錄影，自動持久化至 ArtifactStore，Operations Center 內建 HTML5 播放器與 `/v1/tasks/{id}/video` 即時串流。
 - **OpenTelemetry OTLP Exporter**：背景非同步 Batch Span Exporter，支援標準 OTLP HTTP/JSON 協議串流推送 Spans 至外部 APM（Jaeger、Datadog、OpenTelemetry Collector），附帶隊列丟棄保護與即時狀態監控。
 - **Kubernetes 生產 Manifests 套件與 KEDA**：提供完整 `deploy/k8s/` 生產套件（API、Worker、ConfigMap、Secret、Ingress），以及依 Kafka Topic Lag 自動水平擴展 Worker Pod 的 KEDA ScaledObject 藍圖。
-- **Auth/RBAC**：local HS256 dev token、JWKS RS256 verifier 與 OIDC discovery 取得 `jwks_uri`。
+- **Auth/RBAC**：local HS256 dev token、JWKS RS256 verifier、OIDC discovery 與 OIDC Code Flow。
 - **Roles**：`creator`、`approver`、`operator`、`admin`。
 - **Distributed Tracing**：W3C `traceparent` Context 傳播、Span 生命週期管理、環形記憶體 TraceBuffer、跨進程 Trace Inspector。
 - **Production Alerting Center**：7 大維運規則即時評估、外部 Webhook（Slack/Discord）非阻塞非同步轉發、手動測試派發通道與審計日誌。
 - **Visual Step Replay**：步驟分頁導航條、點選即時預覽截圖縮圖、DOM 摘要與毫秒級步驟執行耗時分析。
 - **Reliability**：Redis/memory rate limit、idempotency、worker lock、scheduler lock、DLQ metadata。
 - **Artifacts**：local filesystem 或 MinIO/S3 backend，包含 SHA-256、content type、size、retention、redaction metadata。
-- **Operations**：`/operations` 整合 Task Lifecycle、Scheduled Tasks、Session Vault、Video Replay、Production Alerting、Trace Inspector、Visual Step Replay、Production Readiness、Observability、artifact access、bulk DLQ。
-- **Worker**：Kafka consumer、Playwright runner、service identity、retry/DLQ、video capture、session persistence。
+- **Operations**：`/operations` 整合 Task Lifecycle、Scheduled Tasks、Session Vault、Video Replay、Live Stream、Queues Telemetry、KMS 狀態、Production Alerting、Trace Inspector、Visual Step Replay、Production Readiness、Observability、artifact access、bulk DLQ。
+- **Worker**：Kafka consumer、Playwright runner、service identity、retry/DLQ、video capture、session persistence、live frame capture、self-healing recovery。
 
 ### 取得 local dev token
 
@@ -171,10 +176,12 @@ Docker 可用時：
 docker compose exec -T api pytest -q
 ```
 
-Kubernetes Manifests 驗證：
+Kubernetes & Helm 套件驗證：
 
 ```powershell
 kubectl kustomize deploy/k8s/
+helm lint deploy/helm/browser-agent
+helm template deploy/helm/browser-agent
 ```
 
 Production-like Compose config 可審查：

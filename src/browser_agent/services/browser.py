@@ -37,6 +37,15 @@ class BrowserRunner:
         artifacts = []
         observations = []
 
+        from .live_telemetry import get_telemetry_broadcaster, ExecutionAbortedException
+        from .self_healing import get_self_healing_engine
+        from ..crypto.kms import encrypt_session_vault_payload
+
+        broadcaster = get_telemetry_broadcaster()
+        self_healer = get_self_healing_engine()
+        tenant_id_str = str(task.get("tenant_id") or "")
+        task_id_str = str(task["id"])
+
         with tempfile.TemporaryDirectory() as temp_dir:
             video_dir = os.path.join(temp_dir, "videos") if should_record_video else None
             if video_dir:
@@ -61,42 +70,82 @@ class BrowserRunner:
                 context = browser.new_context(**context_kwargs)
                 page = context.new_page()
 
+                def _broadcast_live_frame(step_no: int | None = None, action_name: str | None = None):
+                    try:
+                        frame_bytes = page.screenshot(type="jpeg", quality=65)
+                        broadcaster.publish_frame(
+                            task_id=task_id_str,
+                            frame_bytes=frame_bytes,
+                            step_no=step_no,
+                            action=action_name,
+                            url=page.url,
+                        )
+                    except Exception:
+                        pass
+
                 if start_url:
                     self._ensure_allowed(start_url, allowed_domains)
                     page.goto(start_url, wait_until="domcontentloaded", timeout=self.timeout_seconds * 1000)
+                    _broadcast_live_frame(step_no=0, action_name="init_goto")
 
                 for i, step in enumerate(plan, start=1):
+                    # 檢查是否被手動中斷
+                    if broadcaster.is_aborted(task_id_str):
+                        abort_info = broadcaster.get_abort_info(task_id_str) or {}
+                        raise ExecutionAbortedException(task_id_str, abort_info.get("reason", "Operator aborted"))
+
                     action = step.get("action")
                     target = step.get("target")
                     value = step.get("value")
                     url = step.get("url")
+                    fallback_selectors = step.get("fallback_selectors") or []
                     observation = {"step_no": i, "action": action, "target": target}
 
-                    if action == "goto":
-                        self._ensure_allowed(url or target, allowed_domains)
-                        page.goto(url or target, wait_until="domcontentloaded", timeout=self.timeout_seconds * 1000)
-                    elif action == "click":
-                        page.locator(target).first.click(timeout=self.timeout_seconds * 1000)
-                    elif action == "fill":
-                        page.locator(target).first.fill(value or "", timeout=self.timeout_seconds * 1000)
-                    elif action == "press":
-                        page.locator(target).first.press(value or "Enter", timeout=self.timeout_seconds * 1000)
-                    elif action == "wait":
-                        page.wait_for_timeout(int(step.get("ms", 1000)))
-                    elif action == "extract_text":
-                        observation["value"] = page.locator(target).first.inner_text(timeout=self.timeout_seconds * 1000)
-                    elif action == "screenshot":
-                        shot = page.screenshot(full_page=True)
-                        stored = artifact_store.write_bytes(
-                            str(task["id"]),
-                            "screenshot",
-                            shot,
-                            suffix=".png",
-                            content_type="image/png",
-                        )
-                        artifacts.append(_stored_artifact_payload("screenshot", stored))
-                    else:
-                        observation["error"] = f"unsupported action: {action}"
+                    try:
+                        if action == "goto":
+                            self._ensure_allowed(url or target, allowed_domains)
+                            page.goto(url or target, wait_until="domcontentloaded", timeout=self.timeout_seconds * 1000)
+                        elif action in {"click", "fill", "press"}:
+                            # 透過自癒引擎探測
+                            locator, heal_info = self_healer.resolve_target(
+                                page=page,
+                                target=target,
+                                action=action,
+                                fallback_selectors=fallback_selectors,
+                                instruction=step.get("instruction"),
+                                timeout_ms=min(self.timeout_seconds * 1000, 3000),
+                            )
+                            if heal_info:
+                                observation["self_healed"] = True
+                                observation["self_healing"] = heal_info
+
+                            if action == "click":
+                                locator.click(timeout=self.timeout_seconds * 1000)
+                            elif action == "fill":
+                                locator.fill(value or "", timeout=self.timeout_seconds * 1000)
+                            elif action == "press":
+                                locator.press(value or "Enter", timeout=self.timeout_seconds * 1000)
+                        elif action == "wait":
+                            page.wait_for_timeout(int(step.get("ms", 1000)))
+                        elif action == "extract_text":
+                            observation["value"] = page.locator(target).first.inner_text(timeout=self.timeout_seconds * 1000)
+                        elif action == "screenshot":
+                            shot = page.screenshot(full_page=True)
+                            stored = artifact_store.write_bytes(
+                                str(task["id"]),
+                                "screenshot",
+                                shot,
+                                suffix=".png",
+                                content_type="image/png",
+                            )
+                            artifacts.append(_stored_artifact_payload("screenshot", stored))
+                        else:
+                            observation["error"] = f"unsupported action: {action}"
+                    except Exception as step_exc:
+                        observation["error"] = str(step_exc)
+
+                    # 發布 Live 畫面幀
+                    _broadcast_live_frame(step_no=i, action_name=action)
                     observations.append(observation)
 
                 final_url = page.url
@@ -112,21 +161,26 @@ class BrowserRunner:
                 )
                 artifacts.append(_stored_artifact_payload("html", stored_html))
 
-                # 若指定 save_session_as，保存 storage_state
+                # 若指定 save_session_as，使用 KMS 信封加密保存 storage_state
                 if save_session_as:
                     try:
                         saved_state = context.storage_state()
-                        saved_state_bytes = json.dumps(saved_state, indent=2).encode("utf-8")
+                        # KMS 信封加密落盤
+                        encrypted_bytes, enc_meta = encrypt_session_vault_payload(
+                            saved_state,
+                            tenant_id=tenant_id_str,
+                        )
                         stored_session = artifact_store.write_bytes(
                             str(task["id"]),
                             "storage_state",
-                            saved_state_bytes,
-                            suffix=".json",
-                            content_type="application/json",
+                            encrypted_bytes,
+                            suffix=".enc",
+                            content_type="application/octet-stream",
                         )
                         payload = _stored_artifact_payload("storage_state", stored_session)
                         payload["metadata"] = {
                             **(payload.get("metadata") or {}),
+                            **enc_meta,
                             "session_name": save_session_as,
                             "cookies_count": len(saved_state.get("cookies", [])),
                         }
@@ -138,6 +192,7 @@ class BrowserRunner:
                 page.close()
                 context.close()
                 browser.close()
+
 
             # 若有錄影，尋找 WebM 影片並寫入 artifact store
             if video_dir and os.path.exists(video_dir):

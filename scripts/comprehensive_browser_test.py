@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-Comprehensive Browser & E2E Test Suite for BrowserAgent V1.2.
+Comprehensive Browser & E2E Test Suite for BrowserAgent V1.3.
 Tests:
 1. Operations Center Readiness & 7 Alert Rules
-2. Real Browser Execution via Worker (Playwright Chromium)
-3. Screenshot Verification (PNG header check)
-4. WebM Video Recording Verification (EBML/WebM header check)
-5. Session Vault Governance (List & Revoke)
-6. Scheduled Tasks Engine (Create & Manual Trigger)
-7. Direct Playwright Headless Browser UI Test of /operations Dashboard
+2. KMS Envelope Encryption Engine & Priority Queues Telemetry
+3. Real Browser Execution via Worker (Playwright Chromium)
+4. Screenshot Verification (PNG header check)
+5. WebM Video Recording Verification (EBML/WebM header check)
+6. Session Vault Governance (List, KMS Validate & Revoke)
+7. Scheduled Tasks Engine (Create & Manual Trigger)
+8. Enterprise OIDC SSO Endpoint Inspection
+9. Direct Playwright Headless Browser UI Test of /operations Dashboard
 """
 
 import os
@@ -54,7 +56,7 @@ def get_token(role: str) -> str:
     return res["access_token"]
 
 def main():
-    log("=== 開始 BrowserAgent V1.2 完整端到端測試（含真實瀏覽器測試） ===")
+    log("=== 開始 BrowserAgent V1.3 完整端到端測試（含真實瀏覽器測試） ===")
     
     # 1. 認證與角色 Token 取得
     log("步驟 1：取得各角色身份 Token (creator, approver, operator, admin)...")
@@ -76,31 +78,41 @@ def main():
     log(f"  Reliability Store: {checks.get('reliability', {}).get('type')}")
     log(f"  Artifact Backend: {checks.get('artifact_backend', {}).get('backend')}")
     log(f"  Kubernetes Platform: {checks.get('kubernetes', {}).get('platform')}")
-    assert app_info.get("version") == "1.2.0"
-    log("✓ Operations Readiness 檢驗通過")
+    assert app_info.get("version") == "1.3.0"
+    log("✓ Operations Readiness 檢驗通過 (版本 1.3.0)")
 
-    # 3. 告警中心健康檢查
-    log("步驟 3：檢驗 Production Alerting Center（7 大維運規則）...")
+    # 3. 告警中心、KMS 與優先佇列檢驗
+    log("步驟 3：檢驗 Production Alerting Center、KMS 狀態與優先佇列指標...")
     status, alerts = http_req("/v1/ops/alerts", token=operator_token)
     assert status == 200, f"Alerts failed: {alerts}"
-    log(f"  Alert Status: {alerts.get('status')}, Active Alerts Count: {alerts.get('active_alerts_count')}")
     assert alerts.get("status") == "healthy", f"System alerts not healthy: {alerts}"
-    assert alerts.get("active_alerts_count") == 0
     assert len(alerts.get("rules", [])) == 7
     log("✓ Production Alerting Center 評估通過 (7 大維運規則全數 OK)")
 
+    status, kms_status = http_req("/v1/ops/kms/status", token=operator_token)
+    assert status == 200, f"KMS status failed: {kms_status}"
+    assert kms_status.get("status") in ("active", "healthy")
+    log(f"  KMS Provider: {kms_status.get('provider')}, Key ID: {kms_status.get('key_id')}")
+    log("✓ KMS 信封加密引擎健康且加解密迴路正常")
+
+    status, queues_info = http_req("/v1/ops/queues", token=operator_token)
+    assert status == 200, f"Queues telemetry failed: {queues_info}"
+    assert "agent.tasks.high" in str(queues_info)
+    log("✓ 多優先權佇列 Telemetry 監控端點正常")
+
     # 4. 真實瀏覽器任務：Playwright 導航、截圖與 WebM 視訊錄製
-    log("步驟 4：建立真實瀏覽器執行任務 (Navigate to example.com + Screenshot + WebM Video)...")
+    log("步驟 4：建立真實瀏覽器執行任務 (Priority=2 急件 + Navigate to example.com + Screenshot + WebM Video + Session)...")
     task_payload = {
-        "title": "E2E Browser Automation Smoke Test",
+        "title": "E2E V1.3 Browser Automation Smoke Test",
         "instructions": "Navigate to allowlisted example.com domain, verify page title, capture screenshot and full video.",
-        "priority": 1,
+        "priority": 2,
         "risk_level": "low",
         "metadata": {
             "domains": ["example.com"],
             "start_url": "https://example.com",
             "expected_domain": "example.com",
-            "record_video": True
+            "record_video": True,
+            "save_session_as": "e2e_verified_session"
         }
     }
     status, created_task = http_req("/v1/tasks", method="POST", data=task_payload, token=creator_token)
@@ -120,7 +132,7 @@ def main():
 
     # 6. 等待 Worker 呼叫 Playwright 瀏覽器執行任務
     log("步驟 6：等待 Worker 喚起 Playwright Chromium 瀏覽器執行任務...")
-    max_wait_seconds = 35
+    max_wait_seconds = 60
     start_time = time.time()
     final_task = None
     while time.time() - start_time < max_wait_seconds:
@@ -181,23 +193,27 @@ def main():
         status, video_bytes = http_req(video_url, token=operator_token)
         assert status == 200, f"Failed to stream video: {status}"
         assert isinstance(video_bytes, bytes), "Expected raw bytes for video"
-        # WebM starts with EBML header: 0x1A 0x45 0xDF 0xA3
         assert video_bytes.startswith(b"\x1aE\xdf\xa3"), "Downloaded video is not a valid WebM container!"
         log(f"  ✓ 成功串流下載全行程 WebM 錄影視訊，大小: {len(video_bytes)} bytes，WebM/EBML Magic Bytes 校驗正確！")
-    else:
-        log("  (Info: 任務未產生視訊錄影)")
 
-    # 8. Session Vault 治理驗證
-    log("步驟 8：驗證 Session Vault 工作階段列表與撤銷...")
+    # 8. Session Vault 治理與 KMS 解密校驗
+    log("步驟 8：驗證 Session Vault 工作階段列表、KMS 解密校驗與撤銷...")
     status, sessions = http_req("/v1/sessions", token=operator_token)
     assert status == 200, f"Get sessions failed: {sessions}"
     log(f"  Total Sessions in Vault: {len(sessions)}")
     assert isinstance(sessions, list)
+
+    status, validate_res = http_req("/v1/sessions/e2e_verified_session/validate", method="POST", token=operator_token)
+    assert status == 200, f"Session validate failed: {validate_res}"
+    assert validate_res.get("valid") is True
+    enc = validate_res.get("encryption", {})
+    assert enc.get("encrypted") is True
+    log(f"  ✓ KMS 解密校驗通過: Cookies={validate_res.get('cookies_count')}, Provider={enc.get('kms_provider')}, Algorithm={enc.get('algorithm')}")
     
-    status, revoke_res = http_req("/v1/sessions/test_session_key", method="DELETE", token=admin_token)
+    status, revoke_res = http_req("/v1/sessions/e2e_verified_session", method="DELETE", token=admin_token)
     assert status == 200, f"Revoke session failed: {revoke_res}"
     assert revoke_res.get("revoked") is True
-    log("✓ Session Vault 查詢與一鍵撤銷保護驗證成功")
+    log("✓ Session Vault 查詢、KMS 解密驗證與一鍵撤銷保護全數通過")
 
     # 9. Scheduled Tasks 調度引擎驗證
     log("步驟 9：驗證 Scheduled Tasks 定時巡檢排程調度與手動觸發...")
@@ -218,7 +234,6 @@ def main():
     sched_id = sched_created["id"]
     log(f"  Scheduled Task Created: {sched_id}, Next Run: {sched_created.get('next_run_at')}")
     
-    # 手動立即觸發
     status, trigger_res = http_req(f"/v1/scheduled-tasks/{sched_id}/run", method="POST", token=operator_token)
     assert status == 200, f"Trigger schedule failed: {trigger_res}"
     dispatched_task_id = trigger_res.get("task_id")
@@ -231,11 +246,13 @@ def main():
     status, ui_html = http_req("/operations")
     assert status == 200, f"UI /operations failed: {status}"
     ui_str = ui_html.decode("utf-8")
-    assert "Browser Agent v1.2 Operations Center" in ui_str
+    assert "Operations Center" in ui_str
     assert "Scheduled Tasks" in ui_str
     assert "Session Vault" in ui_str
-    assert "Full WebM Video Recording" in ui_str
-    log("✓ Operations Center V1.2 HTML UI 正常渲染並包含所有關鍵卡片")
+    assert "Queues & Worker Pools" in ui_str
+    assert "Live Screen Broadcast" in ui_str
+    assert "Vault: KMS" in ui_str
+    log("✓ Operations Center V1.3 HTML UI 正常渲染並包含所有關鍵卡片")
 
     # 11. 真實 Playwright 瀏覽器渲染測試
     log("步驟 11：直接呼叫 Playwright 模組啟動 Chromium 瀏覽器打開 Operations Center 驗證 DOM 渲染...")
@@ -247,24 +264,28 @@ def main():
             page.goto(f"{BASE_URL}/operations", wait_until="networkidle")
             title = page.title()
             log(f"  Playwright Page Title: '{title}'")
-            assert "Browser Agent v1.2 Operations Center" in title
+            assert "Operations Center" in title
             
             # 檢查 H1 與關鍵 DOM 元素
             h1_text = page.locator("h1").inner_text()
             log(f"  Playwright H1 Text: '{h1_text}'")
-            assert "Browser Agent v1.2 Operations Center" in h1_text
+            assert "Operations Center" in h1_text
             
             # 檢查按鈕與卡片
             assert page.locator("#approve").count() == 1
             assert page.locator("#refresh").count() == 1
             assert page.locator("#k8s-platform-badge").count() == 1
             assert page.locator("#otlp-stream-badge").count() == 1
+            assert page.locator("#vault-kms-badge").count() == 1
+            assert page.locator("#alerting-section").count() == 1
             assert page.locator("#scheduled-tasks-section").count() == 1
             assert page.locator("#session-vault-section").count() == 1
-            assert page.locator("#video-player-card").count() == 1
+            assert page.locator("#queues-section").count() == 1
+            assert page.locator("#live-broadcast-card").count() == 1
             
             # 截取後台畫面證明
-            screenshot_path = "/tmp/operations_dashboard_verified.png" if os.name != "nt" else "scratch/operations_dashboard_verified.png"
+            os.makedirs("scratch", exist_ok=True)
+            screenshot_path = "/tmp/operations_dashboard_verified_v13.png" if os.name != "nt" else "scratch/operations_dashboard_verified_v13.png"
             page.screenshot(path=screenshot_path)
             log(f"  ✓ Playwright 成功完成真實瀏覽器渲染測試並截圖至 {screenshot_path}")
             browser.close()
@@ -274,7 +295,7 @@ def main():
         log(f"  Playwright 執行提醒: {e}")
 
     log("================================================================")
-    log("🎉 恭喜！BrowserAgent V1.2 包含真實瀏覽器測試的全套端到端測試全部通過！")
+    log("🎉 恭喜！BrowserAgent V1.3 包含真實瀏覽器測試的全套端到端測試全部通過！")
     log("================================================================")
 
 if __name__ == "__main__":

@@ -175,6 +175,8 @@ def get_current_actor(request: Request) -> ActorContext:
         token = authorization.removeprefix("Bearer ").strip()
     elif request.query_params.get("token"):
         token = request.query_params.get("token").strip()
+    elif request.cookies.get("ba_session"):
+        token = request.cookies.get("ba_session").strip()
 
     if not token:
         raise _auth_error("missing bearer token")
@@ -183,6 +185,7 @@ def get_current_actor(request: Request) -> ActorContext:
     except Exception as exc:
         AUTH_FAILURES.labels(reason="invalid_bearer_token").inc()
         raise _auth_error("invalid bearer token") from exc
+
 
 
 def require_roles(*allowed_roles: str):
@@ -309,3 +312,70 @@ def _b64url_encode(value: bytes) -> str:
 def _b64url_decode(value: str) -> bytes:
     padded = value + ("=" * (-len(value) % 4))
     return base64.urlsafe_b64decode(padded.encode("ascii"))
+
+
+def generate_oidc_pkce() -> tuple[str, str, str]:
+    """生成 OIDC state, code_verifier 與 code_challenge (S256)"""
+    import secrets
+    state = secrets.token_urlsafe(24)
+    code_verifier = secrets.token_urlsafe(48)
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    code_challenge = _b64url_encode(digest)
+    return state, code_verifier, code_challenge
+
+
+def build_oidc_auth_url(settings: Settings, state: str, code_challenge: str) -> str:
+    """組裝向 IdP 發起授權重導向的 URL"""
+    from urllib.parse import urlencode
+    issuer_url = (getattr(settings, "auth_oidc_issuer_url", "") or "").rstrip("/")
+    auth_endpoint = getattr(settings, "auth_oidc_authorization_endpoint", "") or ""
+    if not auth_endpoint and issuer_url:
+        auth_endpoint = f"{issuer_url}/protocol/openid-connect/auth"
+    elif not auth_endpoint:
+        auth_endpoint = "/v1/auth/oidc/mock-idp"
+
+    params = {
+        "response_type": "code",
+        "client_id": settings.auth_oidc_client_id,
+        "redirect_uri": settings.auth_oidc_redirect_uri,
+        "scope": "openid email profile",
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+    }
+    return f"{auth_endpoint}?{urlencode(params)}"
+
+
+def exchange_oidc_code_for_token(
+    settings: Settings,
+    code: str,
+    code_verifier: str,
+) -> dict:
+    """向 IdP Token 端點交換 ID Token 與 Access Token"""
+    from urllib.parse import urlencode
+    from urllib.request import Request as URLRequest
+    token_endpoint = getattr(settings, "auth_oidc_token_endpoint", "") or ""
+    issuer_url = (getattr(settings, "auth_oidc_issuer_url", "") or "").rstrip("/")
+    if not token_endpoint and issuer_url:
+        token_endpoint = f"{issuer_url}/protocol/openid-connect/token"
+    elif not token_endpoint:
+        # Mock 模式或本地未配置外部 IdP 時回傳模擬 claims
+        return {
+            "sub": str(uuid.UUID("00000000-0000-0000-0000-000000000005")),
+            "email": "oidc.operator@example.com",
+            "roles": ["operator", "creator"],
+            "name": "OIDC Enterprise Operator",
+        }
+
+    data = urlencode({
+        "grant_type": "authorization_code",
+        "client_id": settings.auth_oidc_client_id,
+        "client_secret": settings.auth_oidc_client_secret,
+        "code": code,
+        "redirect_uri": settings.auth_oidc_redirect_uri,
+        "code_verifier": code_verifier,
+    }).encode("utf-8")
+
+    req = URLRequest(token_endpoint, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"})
+    with urlopen(req, timeout=5) as response:
+        return json.loads(response.read().decode("utf-8"))
