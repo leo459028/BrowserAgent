@@ -45,6 +45,8 @@ class Orchestrator:
             instructions=payload["instructions"],
             priority=payload.get("priority", 0),
             risk_level=payload.get("risk_level", "low"),
+            browser_engine=payload.get("browser_engine", "chromium"),
+            matrix_id=payload.get("matrix_id"),
             status="created",
             correlation_id=correlation_id,
             idempotency_key=idempotency_key,

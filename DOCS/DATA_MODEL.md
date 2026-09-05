@@ -1,6 +1,6 @@
 # Data Model
 
-資料模型以 [src/browser_agent/models.py](../src/browser_agent/models.py) 為準。V1.2 包含 Alembic migration `0003_v12_scheduled_tasks`，新增 `scheduled_tasks` 資料表與 `tasks.scheduled_task_id` 外鍵欄位，並擴充 Session Vault (`storage_state`) 與全行程錄影 (`video`) Artifacts。
+資料模型以 [src/browser_agent/models.py](../src/browser_agent/models.py) 為準。V1.4 包含 Alembic migration `0004_v14_federation_and_matrix`，新增 `cluster_nodes` 資料表與 `tasks`（`browser_engine`, `matrix_id`, `human_intervened`, `dlp_masked`）擴充欄位，延續 V1.2 `0003_v12_scheduled_tasks` 之 `scheduled_tasks` 表與工作階段憑證保險箱。
 
 ## Local Dev Identity
 
@@ -14,6 +14,33 @@
 | operator | `operator@example.com` | `00000000-0000-0000-0000-000000000005` |
 
 Tenant：`00000000-0000-0000-0000-000000000001`。
+
+## Tasks Table (`tasks`) V1.4 擴充欄位
+
+| 欄位 | 型別 | 描述 |
+|---|---|---|
+| `browser_engine` | Text | 指定執行的瀏覽器核心：`chromium`（預設）、`firefox` 或 `webkit` |
+| `matrix_id` | Text | 跨瀏覽器矩陣執行批次唯一識別碼（nullable，矩陣派發時自動賦值） |
+| `human_intervened` | Boolean | 任務執行過程中是否曾由維運人員介入遠端操作（預設 `False`） |
+| `dlp_masked` | Boolean | 任務執行期是否套用了 Zero-Trust 動態資料脫敏與像素遮罩（預設 `False`） |
+| `scheduled_task_id` | UUID (FK) | 來源 Scheduled Task ID（若為定時巡檢產生） |
+
+## Cluster Nodes Table (`cluster_nodes`)
+
+V1.4 新增資料表，用於多叢集排程同盟拓撲與分散式租約狀態記錄：
+
+| 欄位 | 型別 | 描述 |
+|---|---|---|
+| `id` | UUID (PK) | 節點唯一主鍵識別碼 |
+| `node_id` | Text (Unique) | 叢集節點唯一名稱標識（如 `cluster-node-tokyo-01`） |
+| `region` | Text | 所屬地理區域識別標籤（如 `ap-northeast-1`） |
+| `status` | Text | 存活狀態：`online`、`degraded`、`offline` |
+| `is_leader` | Boolean | 當前是否持有 Leader 排程租約主導權 |
+| `active_schedules_count` | Integer | 當前指派至此節點或由其管理的活躍排程數 |
+| `last_heartbeat` | DateTime (UTC) | 最後心跳時間戳記 |
+| `metadata_` | JSON | 節點健康度、負載與環境 metadata |
+| `created_at` | DateTime (UTC) | 節點首次註冊時間 |
+| `updated_at` | DateTime (UTC) | 節點最後更新時間 |
 
 ## Scheduled Tasks Table (`scheduled_tasks`)
 
@@ -33,9 +60,6 @@ V1.2 新增資料表，用於支援定時巡檢任務排程調度：
 | `created_by` | UUID (FK) | 建立者 User ID |
 | `created_at` | DateTime (UTC) | 建立時間戳記 |
 | `updated_at` | DateTime (UTC) | 最後更新時間戳記 |
-
-`tasks` 表擴充關聯欄位：
-- `scheduled_task_id`：UUID (FK -> `scheduled_tasks.id`, nullable=True)。若任務是由排程自動派發或手動立即觸發，此欄位記錄來源排程 ID。
 
 ## Task Metadata
 
@@ -163,3 +187,8 @@ S3 artifact metadata 範例：
 - `session.validated`（KMS 解密驗證事件）
 - `auth.oidc_callback_success`（OIDC SSO 授權回調成功）
 - `otlp.flushed`
+- `task.paused`（雙向遠端接管進入暫停事件）
+- `task.resumed`（雙向遠端接管恢復自動化推進事件）
+- `task.interacted`（下發反向操作指令注入事件）
+- `federation.heartbeat`（多叢集節點心跳註冊事件）
+- `federation.re_elected`（同盟領導權強制重選事件）

@@ -33,3 +33,11 @@ data:
   ALERT_DLQ_THRESHOLD: {{ .Values.config.alertDlqThreshold | quote }}
   ALERT_AUTH_FAILURES_THRESHOLD: {{ .Values.config.alertAuthFailuresThreshold | quote }}
   ALERT_QUARANTINE_THRESHOLD: {{ .Values.config.alertQuarantineThreshold | quote }}
+  DLP_ENABLED: {{ .Values.config.dlpEnabled | quote }}
+  DLP_MASK_PASSWORDS: {{ .Values.config.dlpMaskPasswords | quote }}
+  DLP_REDACT_TOKENS: {{ .Values.config.dlpRedactTokens | quote }}
+  FEDERATION_ENABLED: {{ .Values.config.federationEnabled | quote }}
+  FEDERATION_NODE_ID: {{ .Values.config.federationNodeId | quote }}
+  FEDERATION_REGION: {{ .Values.config.federationRegion | quote }}
+  DEFAULT_BROWSER_ENGINE: {{ .Values.config.defaultBrowserEngine | quote }}
+  REMOTE_TAKEOVER_ENABLED: {{ .Values.config.remoteTakeoverEnabled | quote }}

@@ -39,12 +39,15 @@ class BrowserRunner:
 
         from .live_telemetry import get_telemetry_broadcaster, ExecutionAbortedException
         from .self_healing import get_self_healing_engine
+        from .dlp import get_dlp_service
         from ..crypto.kms import encrypt_session_vault_payload
 
         broadcaster = get_telemetry_broadcaster()
         self_healer = get_self_healing_engine()
+        dlp = get_dlp_service()
         tenant_id_str = str(task.get("tenant_id") or "")
         task_id_str = str(task["id"])
+        browser_engine = str(metadata.get("browser_engine") or task.get("browser_engine") or "chromium").lower()
 
         with tempfile.TemporaryDirectory() as temp_dir:
             video_dir = os.path.join(temp_dir, "videos") if should_record_video else None
@@ -52,10 +55,13 @@ class BrowserRunner:
                 os.makedirs(video_dir, exist_ok=True)
 
             with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=self.headless,
-                    args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-                )
+                launch_args = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+                if browser_engine == "firefox":
+                    browser = p.firefox.launch(headless=self.headless, args=launch_args)
+                elif browser_engine == "webkit":
+                    browser = p.webkit.launch(headless=self.headless, args=launch_args)
+                else:
+                    browser = p.chromium.launch(headless=self.headless, args=launch_args)
 
                 context_kwargs = {
                     "viewport": {"width": 1440, "height": 900},
@@ -69,9 +75,11 @@ class BrowserRunner:
 
                 context = browser.new_context(**context_kwargs)
                 page = context.new_page()
+                dlp.mask_page(page)
 
                 def _broadcast_live_frame(step_no: int | None = None, action_name: str | None = None):
                     try:
+                        dlp.mask_page(page)
                         frame_bytes = page.screenshot(type="jpeg", quality=65)
                         broadcaster.publish_frame(
                             task_id=task_id_str,
@@ -83,9 +91,32 @@ class BrowserRunner:
                     except Exception:
                         pass
 
+                def _handle_remote_takeover(current_step: int):
+                    """若進入人工接管 (HITL) 暫停模式，輪詢並執行反向控制指令"""
+                    while broadcaster.is_paused(task_id_str):
+                        if broadcaster.is_aborted(task_id_str):
+                            break
+                        actions = broadcaster.get_and_clear_pending_actions(task_id_str)
+                        for act in actions:
+                            try:
+                                a_type = act.get("action")
+                                if a_type == "click":
+                                    page.mouse.click(float(act.get("x", 0)), float(act.get("y", 0)))
+                                elif a_type == "type":
+                                    page.keyboard.type(str(act.get("text", "")))
+                                elif a_type == "press":
+                                    page.keyboard.press(str(act.get("key", "Enter")))
+                                elif a_type == "scroll":
+                                    page.mouse.wheel(float(act.get("delta_x", 0)), float(act.get("delta_y", 100)))
+                            except Exception as act_err:
+                                logger.warning("Takeover action execution error: %s", act_err)
+                        _broadcast_live_frame(step_no=current_step, action_name="human_takeover")
+                        time.sleep(0.3)
+
                 if start_url:
                     self._ensure_allowed(start_url, allowed_domains)
                     page.goto(start_url, wait_until="domcontentloaded", timeout=self.timeout_seconds * 1000)
+                    dlp.mask_page(page)
                     _broadcast_live_frame(step_no=0, action_name="init_goto")
 
                 for i, step in enumerate(plan, start=1):
@@ -93,6 +124,9 @@ class BrowserRunner:
                     if broadcaster.is_aborted(task_id_str):
                         abort_info = broadcaster.get_abort_info(task_id_str) or {}
                         raise ExecutionAbortedException(task_id_str, abort_info.get("reason", "Operator aborted"))
+
+                    # 檢查並處理雙向人機接管 (HITL)
+                    _handle_remote_takeover(current_step=i)
 
                     action = step.get("action")
                     target = step.get("target")
@@ -128,8 +162,11 @@ class BrowserRunner:
                         elif action == "wait":
                             page.wait_for_timeout(int(step.get("ms", 1000)))
                         elif action == "extract_text":
-                            observation["value"] = page.locator(target).first.inner_text(timeout=self.timeout_seconds * 1000)
+                            raw_val = page.locator(target).first.inner_text(timeout=self.timeout_seconds * 1000)
+                            redacted_val, _ = dlp.redact_text(raw_val)
+                            observation["value"] = redacted_val
                         elif action == "screenshot":
+                            dlp.mask_page(page)
                             shot = page.screenshot(full_page=True)
                             stored = artifact_store.write_bytes(
                                 str(task["id"]),
@@ -143,6 +180,9 @@ class BrowserRunner:
                             observation["error"] = f"unsupported action: {action}"
                     except Exception as step_exc:
                         observation["error"] = str(step_exc)
+
+                    # 紀錄單步 DLP 狀態
+                    observation["browser_engine"] = browser_engine
 
                     # 發布 Live 畫面幀
                     _broadcast_live_frame(step_no=i, action_name=action)

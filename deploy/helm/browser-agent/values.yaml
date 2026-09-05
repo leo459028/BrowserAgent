@@ -6,7 +6,7 @@ replicaCount:
 image:
   repository: browser-agent
   pullPolicy: IfNotPresent
-  tag: "1.3.0"
+  tag: "1.4.0"
 
 imagePullSecrets: []
 nameOverride: ""
@@ -58,6 +58,14 @@ config:
   otelEnabled: true
   otelServiceName: "browser-agent"
   otelExporterOtlpEndpoint: "http://otel-collector.monitoring.svc.cluster.local:4318"
+  dlpEnabled: true
+  dlpMaskPasswords: true
+  dlpRedactTokens: true
+  federationEnabled: true
+  federationNodeId: "k8s-node-1"
+  federationRegion: "k8s-cluster"
+  defaultBrowserEngine: "chromium"
+  remoteTakeoverEnabled: true
   alertWebhookUrl: ""
   alertDlqThreshold: 5
   alertAuthFailuresThreshold: 10

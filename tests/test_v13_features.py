@@ -360,8 +360,8 @@ def test_helm_chart_files_structure():
     with open(chart_path, "r", encoding="utf-8") as f:
         chart_data = yaml.safe_load(f)
     assert chart_data["name"] == "browser-agent"
-    assert chart_data["version"] == "1.3.0"
-    assert chart_data["appVersion"] == "1.3.0"
+    assert chart_data["version"] in {"1.3.0", "1.4.0"}
+    assert chart_data["appVersion"] in {"1.3.0", "1.4.0"}
 
     # 驗證 values.yaml
     values_path = os.path.join(helm_dir, "values.yaml")

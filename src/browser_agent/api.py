@@ -31,6 +31,8 @@ from .auth import (
 )
 from .crypto.kms import get_kms_provider, decrypt_session_vault_payload
 from .services.live_telemetry import get_telemetry_broadcaster
+from .services.dlp import get_dlp_service
+from .services.federation import get_federation_manager
 
 from .schemas import (
     AlertTestDispatchRequest,
@@ -43,6 +45,10 @@ from .schemas import (
     ScheduledTaskCreateRequest,
     ScheduledTaskUpdateRequest,
     ScheduledTaskOut,
+    TaskInteractRequest,
+    TaskPauseRequest,
+    MatrixTaskCreateRequest,
+    FederationHeartbeatRequest,
 )
 from .services.scheduler import compute_next_run, evaluate_scheduled_tasks, trigger_scheduled_task
 from .tracing.exporter import get_otlp_exporter
@@ -448,6 +454,7 @@ def create_task(
     return {
         "task_id": str(task.id),
         "status": task.status,
+        "browser_engine": getattr(task, "browser_engine", "chromium"),
         "correlation_id": getattr(task, "correlation_id", None),
         "created_at": task.created_at.isoformat(),
         "idempotency": {"key": idempotency_key, "replayed": False} if idempotency_key else None,
@@ -1497,10 +1504,237 @@ async def task_live_stream(websocket: WebSocket, task_id: str):
         await broadcaster.unsubscribe(task_id, queue)
 
 
+# --- V1.4 雙向即時遠端接管 (HITL) 端點 ---
+
+@router.post("/v1/tasks/{task_id}/interact")
+def interact_with_task(
+    task_id: str,
+    req: TaskInteractRequest,
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    """維運人員反向控制瀏覽器 Page（點擊、鍵盤輸入、滾輪等）"""
+    task = session.get(models.Task, uuid.UUID(task_id))
+    if not task or task.tenant_id != actor.tenant_id:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    broadcaster = get_telemetry_broadcaster()
+    broadcaster.queue_action(task_id, req.model_dump())
+    return {"queued": True, "task_id": task_id, "action": req.action}
+
+
+@router.post("/v1/tasks/{task_id}/pause")
+def pause_task_for_hitl(
+    task_id: str,
+    req: TaskPauseRequest = Body(default=TaskPauseRequest()),
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    """人機協同 (HITL)：暫停任務自動推進，進入接管模式"""
+    task = session.get(models.Task, uuid.UUID(task_id))
+    if not task or task.tenant_id != actor.tenant_id:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    broadcaster = get_telemetry_broadcaster()
+    broadcaster.pause_task(task_id, operator=actor.email, reason=req.reason)
+
+    write_audit(
+        session,
+        actor.tenant_id,
+        actor.email,
+        "task.paused_for_hitl",
+        "task",
+        task_id,
+        {"requested_by": actor.email, "reason": req.reason},
+    )
+    session.commit()
+    return {"paused": True, "task_id": task_id, "operator": actor.email}
+
+
+@router.post("/v1/tasks/{task_id}/resume")
+def resume_task_after_hitl(
+    task_id: str,
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    """恢復任務自動化執行流程"""
+    task = session.get(models.Task, uuid.UUID(task_id))
+    if not task or task.tenant_id != actor.tenant_id:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    broadcaster = get_telemetry_broadcaster()
+    broadcaster.resume_task(task_id, operator=actor.email)
+
+    write_audit(
+        session,
+        actor.tenant_id,
+        actor.email,
+        "task.resumed_from_hitl",
+        "task",
+        task_id,
+        {"resumed_by": actor.email},
+    )
+    session.commit()
+    return {"resumed": True, "task_id": task_id, "operator": actor.email}
+
+
+# --- V1.4 跨瀏覽器矩陣執行 (Cross-Browser Matrix) 端點 ---
+
+@router.post("/v1/tasks/matrix")
+def create_cross_browser_matrix_tasks(
+    req: MatrixTaskCreateRequest,
+    request: Request,
+    actor: ActorContext = Depends(require_roles("creator", "admin")),
+    session: Session = Depends(get_session),
+):
+    """一鍵派發跨瀏覽器矩陣任務（Chromium / Firefox / WebKit）"""
+    settings = get_settings()
+    bus = get_bus(settings.kafka_bootstrap_servers)
+    orch = Orchestrator(session, bus)
+    matrix_id = f"matrix-{uuid.uuid4().hex[:12]}"
+    correlation_id = _correlation_id(request)
+
+    created_tasks = []
+    engines = req.engines if req.engines else ["chromium", "firefox", "webkit"]
+    for eng in engines:
+        payload = {
+            "title": f"[{eng.capitalize()}] {req.title}",
+            "instructions": req.instructions,
+            "priority": req.priority,
+            "risk_level": req.risk_level,
+            "browser_engine": eng,
+            "matrix_id": matrix_id,
+            "metadata": {
+                **req.metadata,
+                "browser_engine": eng,
+                "matrix_id": matrix_id,
+            },
+        }
+        try:
+            t = orch.create_task(
+                actor.tenant_id,
+                actor.user_id,
+                payload,
+                correlation_id=f"{correlation_id}-{eng}",
+                actor_label=actor.email,
+                actor_payload=actor_request_payload(actor),
+            )
+            created_tasks.append(t)
+        except ValueError as exc:
+            session.rollback()
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    session.commit()
+    return {
+        "matrix_id": matrix_id,
+        "total_tasks": len(created_tasks),
+        "tasks": [
+            {
+                "task_id": str(t.id),
+                "browser_engine": t.browser_engine,
+                "status": t.status,
+                "title": t.title,
+            }
+            for t in created_tasks
+        ],
+    }
+
+
+@router.get("/v1/tasks/matrix/{matrix_id}")
+def get_matrix_tasks_summary(
+    matrix_id: str,
+    actor: ActorContext = Depends(get_current_actor),
+    session: Session = Depends(get_session),
+):
+    """查詢跨瀏覽器矩陣任務之聚合結果、差異與狀態"""
+    tasks = (
+        session.execute(
+            select(models.Task)
+            .where(models.Task.tenant_id == actor.tenant_id, models.Task.matrix_id == matrix_id)
+            .order_by(models.Task.created_at.asc())
+        )
+        .scalars()
+        .all()
+    )
+    if not tasks:
+        raise HTTPException(status_code=404, detail="matrix not found")
+
+    tasks_out = []
+    for t in tasks:
+        meta = t.metadata_ or {}
+        eval_data = meta.get("evaluation") or {}
+        tasks_out.append({
+            "task_id": str(t.id),
+            "browser_engine": t.browser_engine,
+            "status": t.status,
+            "title": t.title,
+            "verdict": eval_data.get("verdict"),
+            "score": eval_data.get("score"),
+            "self_healed": bool(meta.get("self_healing")),
+            "dlp_masked": getattr(t, "dlp_masked", False),
+            "human_intervened": getattr(t, "human_intervened", False),
+            "video_artifact_id": meta.get("video_artifact_id"),
+            "created_at": t.created_at.isoformat(),
+            "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+        })
+
+    return {
+        "matrix_id": matrix_id,
+        "total_tasks": len(tasks_out),
+        "tasks": tasks_out,
+    }
+
+
+# --- V1.4 Zero-Trust DLP 與 Multi-Cluster Federation 端點 ---
+
+@router.get("/v1/ops/dlp/status")
+def get_dlp_status_endpoint(actor: ActorContext = Depends(require_roles("operator", "admin"))):
+    """查詢 Zero-Trust DLP 動態情境防護引擎狀態"""
+    dlp = get_dlp_service()
+    return dlp.get_status()
+
+
+@router.get("/v1/ops/federation/nodes")
+def get_federation_topology_endpoint(actor: ActorContext = Depends(require_roles("operator", "admin"))):
+    """查詢多叢集排程同盟之節點清單與拓撲狀態"""
+    mgr = get_federation_manager()
+    return mgr.get_topology()
+
+
+@router.post("/v1/ops/federation/heartbeat")
+def post_federation_heartbeat_endpoint(
+    req: FederationHeartbeatRequest,
+    actor: ActorContext = Depends(require_roles("operator", "admin")),
+    session: Session = Depends(get_session),
+):
+    """註冊或更新同盟節點心跳"""
+    mgr = get_federation_manager()
+    node = mgr.register_heartbeat(
+        node_id=req.node_id,
+        region=req.region,
+        active_schedules_count=req.active_schedules_count,
+        metadata=req.metadata,
+        is_leader=req.is_leader,
+        db_session=session,
+    )
+    return {"registered": True, "node": node}
+
+
+@router.post("/v1/ops/federation/re-election")
+def force_federation_reelection_endpoint(
+    target_node_id: str | None = Body(default=None, embed=True),
+    actor: ActorContext = Depends(require_roles("admin")),
+):
+    """強制轉移或重新選舉同盟叢集 Leader 節點"""
+    mgr = get_federation_manager()
+    new_leader = mgr.force_reelection(target_node_id=target_node_id)
+    return {"re_elected": True, "leader_node_id": new_leader}
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(getattr(settings, "app_log_level", "INFO"))
-    app = FastAPI(title=getattr(settings, "app_name", "browser-agent"), version=getattr(settings, "app_version", "1.3.0"))
+    app = FastAPI(title=getattr(settings, "app_name", "browser-agent"), version=getattr(settings, "app_version", "1.4.0"))
 
 
     @app.middleware("http")
