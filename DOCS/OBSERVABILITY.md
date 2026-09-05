@@ -1,6 +1,6 @@
 # Observability
 
-## Health / Readiness
+## Health / Readiness / Operations Endpoints
 
 | Endpoint | 說明 |
 |---|---|
@@ -8,10 +8,14 @@
 | `GET /readyz` | Database readiness，公開 |
 | `GET /v1/ops/readiness` | Operations readiness，需要 operator/admin，包含 production、observability、kubernetes、otlp |
 | `GET /v1/ops/alerts` | 即時評估維運系統健康與 7 大規則，需要 operator/admin |
+| `GET /v1/ops/kms/status` | 查詢 Session Vault KMS 信封加密狀態與健康指標，需要 operator/admin |
+| `GET /v1/ops/queues` | 查詢多優先權佇列（High/Queued/Batch）深度與 Worker 資源池分流，需要 operator/admin |
 | `GET /v1/ops/traces/{trace_id}` | 查詢端到端 Span 階層追蹤圖，需要 operator/admin |
 | `GET /v1/ops/otlp/status` | 查詢 OpenTelemetry OTLP Exporter 導出狀態與隊列深度，需要 operator/admin |
 | `POST /v1/ops/otlp/flush` | 手動強制排空並推送佇列中之 Spans，需要 admin |
 | `POST /v1/ops/alerts/test-dispatch` | 手動測試外部 Webhook 轉發通道，需要 admin |
+| `WS /v1/tasks/{task_id}/live-stream` | WebSocket 雙向/單向低延遲 JPEG 畫面幀串流廣播 |
+| `GET /v1/sessions/{session_name}/validate` | 即時檢驗指定 Session 憑證解密完整性，需要 operator/admin |
 | `GET /metrics` | Prometheus exposition text，需要 operator/admin |
 
 `/v1/ops/readiness` 回傳 app version、auth mode、local token 狀態、database、reliability store、Kafka config、artifact backend、worker identity、DLQ topic、Production Readiness、Observability、Kubernetes 狀態、OTLP 狀態與 warnings。
@@ -32,9 +36,36 @@
 
 注意：目前 metrics 仍是 process-local。
 
+## 多優先權佇列可觀測性（Queues Telemetry）
+
+V1.3 引入多優先權加權佇列分流機制，透過 `GET /v1/ops/queues` 提供即時指標：
+- **佇列深度**：監控 `agent.tasks.high`、`agent.tasks.queued`、`agent.tasks.batch` 三大 Kafka 主題的未消費任務深度。
+- **分流路由計數**：追蹤高優先急件（`high_priority_routed`）、常規任務（`normal_priority_routed`）與批次任務（`batch_priority_routed`）的路由分流總量。
+- **Worker 資源池狀態**：展示當前 Worker 資源池名稱（`WORKER_POOL_NAME`）與其訂閱之主題清單，支援資源池動態擴展調度。
+
+## 即時畫面 WebSocket 廣播可觀測性（Live Stream Telemetry）
+
+- **廣播佇列狀態**：`LiveTelemetryService` 監控各運行中任務的畫面推播佇列與訂閱客戶端數量。
+- **傳輸速率與延遲**：以非同步事件模型推送 Base64 JPEG 畫面幀（預設 2 FPS），不阻礙 Playwright 執行主迴圈。
+- **生命週期事件監控**：即時廣播 `step_started`、`self_healed`、`task_finished` 與 `aborted` 狀態事件。
+
+## 選擇器自我修復可觀測性（Self-Healing Observability）
+
+- **自癒標記**：當 Fallback Cascade 啟動並成功修復選擇器時，任務狀態與步驟 Output 標註 `self_healed: true`。
+- **自癒審計事件**：自動寫入 `task.self_healed` 審計日誌，記錄原失效選擇器、修復後選擇器、所採策略（`semantic_attribute`、`text_match`、`dom_structure`）與匹配信心度（confidence）。
+- **Operations Center 視覺標籤**：在 Visual Step Replay 步驟分頁與任務詳情中呈現醒目的綠色 `Self-Healed ✓` 徽章。
+
+## KMS 信封加密可觀測性（KMS Crypto Health）
+
+- 透過 `GET /v1/ops/kms/status` 提供透明的加解密健康儀表板：
+  - 運行狀態（`healthy` / `degraded`）
+  - 當前 KMS Provider（`local`、`aws_kms`、`vault`）
+  - 使用中之 Master Key ID 與演算法（AES-256-GCM）
+  - 即時測試加密迴路往返耗時（`roundtrip_ms`）
+
 ## 分散式追蹤（Distributed Tracing）
 
-V1.2 內建基於 W3C `traceparent` 的端到端分散式追蹤與記憶體環形 TraceBuffer：
+V1.3 延續基於 W3C `traceparent` 的端到端分散式追蹤與記憶體環形 TraceBuffer：
 
 1. **Context 傳播**：
    - API Middleware 解析或產生 W3C `traceparent`（`00-{trace_id}-{span_id}-{flags}`），並回寫於 HTTP Response Headers 與 `X-Correlation-ID`。
@@ -49,7 +80,7 @@ V1.2 內建基於 W3C `traceparent` 的端到端分散式追蹤與記憶體環�
 
 ## OpenTelemetry OTLP Exporter 串流導出
 
-V1.2 正式內建非同步背景 `OtlpBatchSpanExporter`，可將分散式追蹤 Spans 即時推送至外部 APM：
+V1.3 內建非同步背景 `OtlpBatchSpanExporter`，可將分散式追蹤 Spans 即時推送至外部 APM：
 
 - **協議格式**：採用標準 OTLP HTTP/JSON 規格（`POST /v1/traces`），相容於 Jaeger、Grafana Tempo、Datadog Agent 與 OpenTelemetry Collector。
 - **背景批次發送**：Span 產生時非同步放入內部記憶體隊列，累積達到 `OTEL_BATCH_SIZE`（預設 50）或逾時閾值時，以獨立背景執行緒批量推送。
@@ -58,7 +89,7 @@ V1.2 正式內建非同步背景 `OtlpBatchSpanExporter`，可將分散式追蹤
 
 ## 生產告警中心（Production Alerting Center）
 
-V1.2 在 Operations Center 內建即時告警評估與外部 Webhook（Slack / Discord）非阻塞式轉發：
+V1.3 在 Operations Center 內建即時告警評估與外部 Webhook（Slack / Discord）非阻塞式轉發：
 
 | 規則 ID | 嚴重等級 | 監控訊號 / 條件 | 處置建議 |
 |---|---|---|---|

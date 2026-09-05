@@ -49,6 +49,11 @@ V1.2 新增資料表，用於支援定時巡檢任務排程調度：
 - `reliability`：idempotency、DLQ、replay、quarantine metadata。
 - `video_artifact_id`：全行程 WebM 錄影視訊 Artifact ID。
 - `trace_context`：`{"trace_id": "...", "span_id": "..."}`。
+- `priority_queue`：發布之 Kafka 主題（`agent.tasks.high`、`agent.tasks.queued` 或 `agent.tasks.batch`）。
+- `self_healed`：是否觸發並成功執行選擇器自我修復（`true`/`false`）。
+- `self_healing_events`：自癒詳細歷程清單（含 step_index、original_selector、healed_selector、strategy、confidence）。
+- `aborted`：任務是否遭到線上即時中止（`true`/`false`）。
+- `aborted_by`：執行中斷的使用者帳號或 Actor ID。
 
 DLQ metadata 範例：
 
@@ -82,7 +87,14 @@ Worker 執行後會更新 `task_steps.status` 與 `task_steps.output_data`。`ou
   "span_id": "e2a1b3c4d5f67890",
   "screenshot_artifact_id": "00000000-0000-0000-0000-000000000099",
   "dom_summary": "Example Domain (url: https://example.com/)",
-  "error": null
+  "error": null,
+  "self_healed": true,
+  "healing_details": {
+    "original_selector": "button#login-btn-old",
+    "healed_selector": "button[data-testid='login-submit']",
+    "strategy": "semantic_attribute",
+    "confidence": 0.85
+  }
 }
 ```
 
@@ -95,13 +107,22 @@ ArtifactStore 支援多種媒體型別（Media Types）：
 3. **WebM Video Recording**：`media_type="video"`，MIME 為 `video/webm`，全行程瀏覽器螢幕視訊。
 4. **Session Vault (Storage State)**：`media_type="storage_state"`，MIME 為 `application/json`。內含 Playwright cookies 與 localStorage 狀態。
 
-Session Artifact Metadata 規格：
+Session Artifact Metadata 規格（支援 KMS 信封加密）：
 ```json
 {
   "session_name": "portal_admin_session",
   "cookies_count": 5,
-  "backend": "local",
-  "status": "valid"
+  "backend": "s3",
+  "status": "valid",
+  "encrypted": true,
+  "kms_provider": "local",
+  "key_id": "session-vault-v1",
+  "algorithm": "AES-256-GCM",
+  "aad_tenant_id": "00000000-0000-0000-0000-000000000001",
+  "encrypted_dek": "b64_encrypted_data_encryption_key_==",
+  "iv": "b64_initialization_vector_==",
+  "tag": "b64_gcm_auth_tag_==",
+  "ciphertext": "b64_aes_gcm_encrypted_payload_=="
 }
 ```
 
@@ -131,10 +152,14 @@ S3 artifact metadata 範例：
 - `task.artifact_written`
 - `task.evaluated`
 - `task.completed`
+- `task.self_healed`（選擇器自我修復成功事件）
+- `task.aborted`（線上即時中斷事件）
 - `alert.test_dispatched`（手動測試派發 Webhook 告警紀錄）
 - `scheduled_task.created`
 - `scheduled_task.updated`
 - `scheduled_task.deleted`
 - `scheduled_task.triggered`
 - `session.revoked`
+- `session.validated`（KMS 解密驗證事件）
+- `auth.oidc_callback_success`（OIDC SSO 授權回調成功）
 - `otlp.flushed`

@@ -8,7 +8,7 @@ python -m compileall src tests worker alembic
 git diff --check
 ```
 
-目前主要測試（共 17 個測試模組，84 個測試全部通過）：
+目前主要測試（共 18 個測試模組，96 個測試全部通過）：
 
 - `tests/test_v01_operations.py`：Operations Center rendering、artifact serialization、task list API、audit API。
 - `tests/test_v05_auth_rbac.py`：local dev token、RBAC、approval actor、artifact tenant access。
@@ -27,6 +27,7 @@ git diff --check
 - `tests/test_v12_video_artifact.py`：Playwright 全行程 WebM 視訊錄影產生、ArtifactStore 寫入與 Task Replay URL 解析。
 - `tests/test_v12_otlp_exporter.py`：非同步背景 Batch Span Exporter、隊列丟棄保護、批次組裝與即時狀態監控。
 - `tests/test_v12_apis.py`：Scheduled Tasks CRUD/Trigger、Session Vault 查詢與撤銷、Video 串流播放、Readiness K8s/OTLP 擴充與 V1.2 UI 渲染。
+- `tests/test_v13_features.py`：KMS 信封加密（Local/AWS/Vault）、AES-256-GCM 租戶 AAD 防篡改、主金鑰輪換、啟發式選擇器自癒（三級 Fallback Cascade、相似度比對與低信心度拒絕）、多優先權加權佇列分流（High/Queued/Batch）、WebSocket 即時畫面幀推播、線上 Abort 攔截、OIDC PKCE 授權碼交換與 HttpOnly Cookie、Session 解密校驗 API、Helm 3 Chart 結構與全向後相容。
 
 ## Docker
 

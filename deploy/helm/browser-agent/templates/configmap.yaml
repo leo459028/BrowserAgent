@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "browser-agent.fullname" . }}-config
+  labels:
+    {{- include "browser-agent.labels" . | nindent 4 }}
+data:
+  APP_ENV: {{ .Values.config.appEnv | quote }}
+  APP_LOG_LEVEL: {{ .Values.config.appLogLevel | quote }}
+  AUTH_MODE: {{ .Values.config.authMode | quote }}
+  AUTH_JWKS_URL: {{ .Values.config.authJwksUrl | quote }}
+  AUTH_OIDC_ISSUER_URL: {{ .Values.config.authOidcIssuerUrl | quote }}
+  AUTH_OIDC_CLIENT_ID: {{ .Values.config.authOidcClientId | quote }}
+  AUTH_OIDC_REDIRECT_URI: {{ .Values.config.authOidcRedirectUri | quote }}
+  ARTIFACT_BACKEND: {{ .Values.config.artifactBackend | quote }}
+  RELIABILITY_STORE: {{ .Values.config.reliabilityStore | quote }}
+  ALLOWLIST_DOMAINS: {{ .Values.config.allowlistDomains | quote }}
+  MULTI_PRIORITY_ENABLED: {{ .Values.config.multiPriorityEnabled | quote }}
+  QUEUE_HIGH_TOPIC: {{ .Values.config.queueHighTopic | quote }}
+  QUEUE_DEFAULT_TOPIC: {{ .Values.config.queueDefaultTopic | quote }}
+  QUEUE_BATCH_TOPIC: {{ .Values.config.queueBatchTopic | quote }}
+  WORKER_POOL: {{ .Values.config.workerPool | quote }}
+  SELF_HEALING_ENABLED: {{ .Values.config.selfHealingEnabled | quote }}
+  SELF_HEALING_THRESHOLD: {{ .Values.config.selfHealingThreshold | quote }}
+  LIVE_BROADCAST_ENABLED: {{ .Values.config.liveBroadcastEnabled | quote }}
+  KMS_PROVIDER: {{ .Values.config.kmsProvider | quote }}
+  KMS_KEY_ID: {{ .Values.config.kmsKeyId | quote }}
+  KMS_REGION: {{ .Values.config.kmsRegion | quote }}
+  OTEL_ENABLED: {{ .Values.config.otelEnabled | quote }}
+  OTEL_SERVICE_NAME: {{ .Values.config.otelServiceName | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.otelExporterOtlpEndpoint | quote }}
+  ALERT_WEBHOOK_URL: {{ .Values.config.alertWebhookUrl | quote }}
+  ALERT_DLQ_THRESHOLD: {{ .Values.config.alertDlqThreshold | quote }}
+  ALERT_AUTH_FAILURES_THRESHOLD: {{ .Values.config.alertAuthFailuresThreshold | quote }}
+  ALERT_QUARANTINE_THRESHOLD: {{ .Values.config.alertQuarantineThreshold | quote }}
