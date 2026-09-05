@@ -8,10 +8,13 @@ from .tracer import (
     parse_traceparent,
     start_span,
 )
+from .exporter import OtlpBatchSpanExporter, get_otlp_exporter
 
 __all__ = [
     "Span",
     "TraceBuffer",
+    "OtlpBatchSpanExporter",
+    "get_otlp_exporter",
     "format_traceparent",
     "generate_span_id",
     "generate_trace_id",

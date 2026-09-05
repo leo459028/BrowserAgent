@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "browser-agent"
-    app_version: str = "1.1.0"
+    app_version: str = "1.2.0"
     app_env: str = "local"
     app_log_level: str = "INFO"
     app_secret_key: str = "change-me"
@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     alert_auth_failures_threshold: int = 10
     alert_quarantine_threshold: int = 3
     alert_webhook_timeout_seconds: float = 3.0
+
+    worker_record_video_default: bool = True
+    scheduler_enabled: bool = True
 
     @property
     def allowlist_domain_set(self) -> set[str]:

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Browser Agent v1.1 Operations Center</title>
+  <title>Browser Agent v1.2 Operations Center</title>
   <style>
     :root {
       color-scheme: light;
@@ -197,11 +197,13 @@
   <main>
     <header>
       <div>
-        <div style="display:flex; align-items:center;">
-          <h1 style="margin:0;">Browser Agent v1.1 Operations Center</h1>
-          <span id="system-alert-badge" class="status pass" style="margin-left: 12px; font-size: 13px;">All Systems Normal</span>
+        <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
+          <h1 style="margin:0;">Browser Agent v1.2 Operations Center</h1>
+          <span id="system-alert-badge" class="status pass" style="font-size: 12px;">All Systems Normal</span>
+          <span id="k8s-platform-badge" class="status pass" style="font-size: 12px;">Platform: Docker/Standalone</span>
+          <span id="otlp-stream-badge" class="status pass" style="font-size: 12px;">OTLP: Ready</span>
         </div>
-        <div class="muted">Operations center for production readiness, Observability, OIDC/JWKS, Reliability / DLQ, Identity/RBAC, metrics, audit, replay, and artifact governance.</div>
+        <div class="muted">Operations center for Scheduled Tasks, Session Vault, Video Replay, OTLP Streaming, Kubernetes Readiness, production readiness, and artifact governance.</div>
       </div>
       <div class="toolbar">
         <button id="refresh" class="secondary">Refresh</button>
@@ -417,11 +419,49 @@
                 </div>
               </div>
             </div>
+          <div id="video-player-card" style="border:1px solid var(--line); border-radius:6px; padding:12px; background:var(--panel-soft); margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <span style="font-weight:700;">Full WebM Video Recording (Playwright)</span>
+              <span id="video-status-label" class="status pass" style="font-size:11px; min-height:18px; padding:0 6px;">Available</span>
+            </div>
+            <video id="step-video-element" controls style="width:100%; max-height:360px; background:#000; border-radius:4px;"></video>
+            <div id="video-placeholder" style="display:none; padding:16px; text-align:center; background:#fff; border:1px dashed var(--line); border-radius:4px; font-size:12px; color:var(--muted);">
+              此任務未包含視訊錄製（未設定 <code>record_video: true</code>）。若需錄影，請在建立任務時於 metadata 加入 <code>"record_video": true</code>，或在左側 Recent Tasks 點選帶有視訊的任務（例如 <code>E2E Browser Automation Smoke Test</code>）。
+            </div>
           </div>
           <details>
             <summary style="cursor:pointer; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:6px;">Raw Timeline Events</summary>
             <div id="replay-timeline" class="muted">Select a task to inspect replay timeline.</div>
           </details>
+        </section>
+
+        <section id="scheduled-tasks-section">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h2 style="margin:0;">Scheduled Tasks (Cron Engine)</h2>
+            <div style="display:flex; gap:6px;">
+              <button id="refresh-schedules" class="secondary" style="min-height:30px; font-size:12px; padding:0 8px;">Refresh</button>
+              <button id="evaluate-schedules-now" class="secondary" style="min-height:30px; font-size:12px; padding:0 8px;">Evaluate Due</button>
+            </div>
+          </div>
+          <div id="scheduled-tasks-list" class="muted">Loading scheduled tasks...</div>
+
+          <details style="margin-top:10px;">
+            <summary style="cursor:pointer; font-size:13px; font-weight:600; color:var(--text); margin-bottom:8px;">+ Create New Scheduled Task</summary>
+            <div style="display:flex; flex-direction:column; gap:8px; background:var(--panel-soft); padding:10px; border-radius:6px; border:1px solid var(--line);">
+              <input id="sched-name" type="text" placeholder="Schedule Name (e.g. daily-erp-check)" style="padding:6px; border:1px solid var(--line); border-radius:4px;" />
+              <input id="sched-cron" type="text" placeholder="Cron Expression (e.g. 0 8 * * * or */5 * * * *)" value="*/5 * * * *" style="padding:6px; border:1px solid var(--line); border-radius:4px; font-family:monospace;" />
+              <textarea id="sched-template" rows="3" placeholder='Task Template JSON' style="padding:6px; border:1px solid var(--line); border-radius:4px; font-family:monospace;">{"title":"Scheduled Auto Inspection","instructions":"Open site and capture screenshot.","risk_level":"low","priority":1,"metadata":{"start_url":"https://example.com","record_video":true}}</textarea>
+              <button id="btn-create-schedule" class="secondary" style="align-self:flex-start;">Create Schedule</button>
+            </div>
+          </details>
+        </section>
+
+        <section id="session-vault-section">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h2 style="margin:0;">Session Vault (Storage State)</h2>
+            <button id="refresh-sessions" class="secondary" style="min-height:30px; font-size:12px; padding:0 8px;">Refresh</button>
+          </div>
+          <div id="sessions-list" class="muted">Loading stored sessions...</div>
         </section>
 
         <section>
@@ -658,6 +698,20 @@
           : "disabled; schema reserved";
         $("otel-propagators").textContent = observability.otel_propagators || "-";
         $("log-schema").textContent = (observability.log_schema_fields || []).join(", ");
+
+        const k8s = info.checks?.kubernetes || {};
+        const k8sBadge = $("k8s-platform-badge");
+        if (k8sBadge) {
+          k8sBadge.textContent = k8s.detected ? "Platform: Kubernetes (K8s)" : "Platform: Docker / Standalone";
+          k8sBadge.className = k8s.detected ? "status pass" : "status";
+        }
+
+        const otlpExp = (info.observability || {}).otlp_exporter || {};
+        const otlpBadge = $("otlp-stream-badge");
+        if (otlpBadge) {
+          otlpBadge.textContent = otlpExp.enabled ? `OTLP: Streaming (${otlpExp.exported_spans_count || 0})` : "OTLP: Ready";
+          otlpBadge.className = otlpExp.enabled ? "status pass" : "status";
+        }
       } catch (error) {
         setStatus("ops-readiness", "error");
         setStatus("production-readiness", "error");
@@ -804,7 +858,17 @@
       const btn = $("refresh");
       if (btn) btn.textContent = "Refreshing...";
       try {
-        await Promise.all([checkRuntime(), refreshReadiness(), refreshMetrics(), refreshTasks(), refreshReliability(), refreshDlq(), refreshAlerts()]);
+        await Promise.all([
+          checkRuntime(),
+          refreshReadiness(),
+          refreshMetrics(),
+          refreshTasks(),
+          refreshReliability(),
+          refreshDlq(),
+          refreshAlerts(),
+          refreshScheduledTasks(),
+          refreshSessions(),
+        ]);
         if (btn) {
           btn.textContent = "Refreshed ✓";
           setTimeout(() => { btn.textContent = "Refresh"; }, 1000);
@@ -1013,6 +1077,56 @@
     function renderVisualReplay(replay) {
       const traceId = replay.trace_id || "-";
       $("replay-trace-id").textContent = `Trace: ${traceId}`;
+
+      const videoCard = $("video-player-card");
+      const videoEl = $("step-video-element");
+      const videoPlaceholder = $("video-placeholder");
+      const videoStatusLabel = $("video-status-label");
+      if (videoCard) videoCard.style.display = "block";
+      if (replay.video_url) {
+        if (videoStatusLabel) {
+          videoStatusLabel.className = "status pass";
+          videoStatusLabel.textContent = "Available ✓";
+        }
+        if (videoPlaceholder) videoPlaceholder.style.display = "none";
+        if (videoEl) {
+          videoEl.style.display = "block";
+          if (videoEl.dataset.src !== replay.video_url) {
+            videoEl.dataset.src = replay.video_url;
+            (async () => {
+              try {
+                const headers = await authHeaders("operator");
+                const res = await fetch(replay.video_url, { headers });
+                if (res.ok) {
+                  const blob = await res.blob();
+                  const blobUrl = URL.createObjectURL(blob);
+                  videoEl.src = blobUrl;
+                  videoEl.load();
+                } else {
+                  const tok = headers.Authorization ? headers.Authorization.replace("Bearer ", "").trim() : "";
+                  videoEl.src = replay.video_url + (replay.video_url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(tok);
+                  videoEl.load();
+                }
+              } catch (err) {
+                console.error("Failed to load authenticated video:", err);
+              }
+            })();
+          }
+        }
+      } else {
+        if (videoStatusLabel) {
+          videoStatusLabel.className = "status warn";
+          videoStatusLabel.textContent = "Not Recorded";
+        }
+        if (videoEl) {
+          videoEl.pause();
+          videoEl.src = "";
+          videoEl.dataset.src = "";
+          videoEl.style.display = "none";
+        }
+        if (videoPlaceholder) videoPlaceholder.style.display = "block";
+      }
+
       const steps = replay.steps_visual || [];
       currentStepsVisual = steps;
       const container = $("step-tabs-container");
@@ -1307,6 +1421,182 @@
       }
     }
 
+    async function refreshScheduledTasks() {
+      try {
+        const list = await getJson("/v1/scheduled-tasks", {}, "operator");
+        const container = $("scheduled-tasks-list");
+        if (!container) return;
+        if (!list || !list.length) {
+          container.innerHTML = '<span class="muted">No scheduled tasks defined.</span>';
+          return;
+        }
+        container.innerHTML = `<table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Cron</th>
+              <th>Status</th>
+              <th>Next Run (UTC)</th>
+              <th>Last Run</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list.map(s => `
+              <tr>
+                <td><strong>${escapeHtml(s.name)}</strong></td>
+                <td><code style="background:var(--panel-soft); padding:2px 4px; border-radius:3px;">${escapeHtml(s.cron_expression)}</code></td>
+                <td><span class="status ${s.is_active ? "pass" : "warn"}">${s.is_active ? "active" : "paused"}</span></td>
+                <td style="font-size:12px;">${escapeHtml(s.next_run_at ? new Date(s.next_run_at).toLocaleString() : "-")}</td>
+                <td style="font-size:12px;">${escapeHtml(s.last_run_at ? new Date(s.last_run_at).toLocaleTimeString() : "-")}</td>
+                <td>
+                  <button class="secondary" data-run-schedule-id="${s.id}" style="min-height:26px; padding:0 8px; font-size:11px;">Run Now</button>
+                  <button class="secondary" data-toggle-schedule-id="${s.id}" data-active="${s.is_active}" style="min-height:26px; padding:0 8px; font-size:11px;">${s.is_active ? "Pause" : "Resume"}</button>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>`;
+
+        container.querySelectorAll("button[data-run-schedule-id]").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            btn.disabled = true;
+            try {
+              const res = await getJson(`/v1/scheduled-tasks/${btn.dataset.runScheduleId}/run`, {method: "POST"}, "operator");
+              currentTaskId = res.task_id;
+              await refreshAll();
+              startPolling();
+            } catch (err) {
+              alert("Failed to run schedule: " + err.message);
+            } finally {
+              btn.disabled = false;
+            }
+          });
+        });
+
+        container.querySelectorAll("button[data-toggle-schedule-id]").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            btn.disabled = true;
+            const newActive = btn.dataset.active !== "true";
+            try {
+              await getJson(`/v1/scheduled-tasks/${btn.dataset.toggleScheduleId}`, {
+                method: "PATCH",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({is_active: newActive}),
+              }, "operator");
+              await refreshScheduledTasks();
+            } catch (err) {
+              alert("Failed to update schedule: " + err.message);
+            } finally {
+              btn.disabled = false;
+            }
+          });
+        });
+      } catch (err) {
+        if ($("scheduled-tasks-list")) {
+          $("scheduled-tasks-list").innerHTML = `<span class="error-text">${escapeHtml(err.message)}</span>`;
+        }
+      }
+    }
+
+    async function createScheduledTask() {
+      const name = $("sched-name").value.trim();
+      const cron = $("sched-cron").value.trim();
+      let template = {};
+      try {
+        template = JSON.parse($("sched-template").value.trim());
+      } catch (e) {
+        alert("Template is not valid JSON: " + e.message);
+        return;
+      }
+      if (!name || !cron) {
+        alert("Name and Cron expression are required.");
+        return;
+      }
+      try {
+        await getJson("/v1/scheduled-tasks", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({name, cron_expression: cron, task_template: template}),
+        }, "creator");
+        $("sched-name").value = "";
+        await refreshScheduledTasks();
+      } catch (err) {
+        alert("Failed to create scheduled task: " + err.message);
+      }
+    }
+
+    async function evaluateSchedulesNow() {
+      const btn = $("evaluate-schedules-now");
+      if (btn) btn.disabled = true;
+      try {
+        const res = await getJson("/v1/scheduled-tasks/evaluate", {method: "POST"}, "operator");
+        await refreshScheduledTasks();
+        await refreshTasks();
+        alert(`Evaluation completed: ${res.dispatched} tasks dispatched, ${res.skipped} skipped.`);
+      } catch (err) {
+        alert("Evaluation failed: " + err.message);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function refreshSessions() {
+      try {
+        const sessions = await getJson("/v1/sessions", {}, "operator");
+        const container = $("sessions-list");
+        if (!container) return;
+        if (!sessions || !sessions.length) {
+          container.innerHTML = '<span class="muted">No storage state sessions stored.</span>';
+          return;
+        }
+        container.innerHTML = `<table>
+          <thead>
+            <tr>
+              <th>Session Name</th>
+              <th>Cookies Count</th>
+              <th>Backend</th>
+              <th>Created</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sessions.map(s => `
+              <tr>
+                <td><strong>${escapeHtml(s.session_name)}</strong></td>
+                <td>${s.cookies_count}</td>
+                <td>${escapeHtml(s.backend)}</td>
+                <td style="font-size:12px;">${escapeHtml(new Date(s.created_at).toLocaleTimeString())}</td>
+                <td><span class="status ${s.status === 'valid' ? 'pass' : 'failed'}">${escapeHtml(s.status)}</span></td>
+                <td>
+                  <button class="secondary" data-revoke-session="${escapeHtml(s.session_name)}" style="min-height:26px; padding:0 8px; font-size:11px;">Revoke</button>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>`;
+
+        container.querySelectorAll("button[data-revoke-session]").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            btn.disabled = true;
+            try {
+              await getJson(`/v1/sessions/${encodeURIComponent(btn.dataset.revokeSession)}`, {method: "DELETE"}, "admin");
+              await refreshSessions();
+            } catch (err) {
+              alert("Failed to revoke session: " + err.message);
+            } finally {
+              btn.disabled = false;
+            }
+          });
+        });
+      } catch (err) {
+        if ($("sessions-list")) {
+          $("sessions-list").innerHTML = `<span class="error-text">${escapeHtml(err.message)}</span>`;
+        }
+      }
+    }
+
     function escapeHtml(value) {
       return String(value)
         .replaceAll("&", "&amp;")
@@ -1358,6 +1648,10 @@
     $("refresh-alerts").addEventListener("click", refreshAlerts);
     $("test-dispatch-alert").addEventListener("click", testDispatchAlert);
     $("trace-lookup-btn").addEventListener("click", lookupTrace);
+    if ($("refresh-schedules")) $("refresh-schedules").addEventListener("click", refreshScheduledTasks);
+    if ($("evaluate-schedules-now")) $("evaluate-schedules-now").addEventListener("click", evaluateSchedulesNow);
+    if ($("btn-create-schedule")) $("btn-create-schedule").addEventListener("click", createScheduledTask);
+    if ($("refresh-sessions")) $("refresh-sessions").addEventListener("click", refreshSessions);
     renderScenario();
     renderStatusFlow("idle");
     refreshIdentity();

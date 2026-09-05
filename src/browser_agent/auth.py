@@ -170,9 +170,14 @@ def get_current_actor(request: Request) -> ActorContext:
     if not getattr(settings, "auth_enabled", True):
         return local_dev_actor_for_role("admin")
     authorization = request.headers.get("Authorization")
-    if not authorization or not authorization.startswith("Bearer "):
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ").strip()
+    elif request.query_params.get("token"):
+        token = request.query_params.get("token").strip()
+
+    if not token:
         raise _auth_error("missing bearer token")
-    token = authorization.removeprefix("Bearer ").strip()
     try:
         return decode_access_token(token, settings=settings)
     except Exception as exc:

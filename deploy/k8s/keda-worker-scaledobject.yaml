@@ -1,0 +1,24 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: browseragent-worker-scaler
+  labels:
+    app: browseragent
+    component: worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: browseragent-worker
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  pollingInterval: 15
+  cooldownPeriod: 60
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.kafka.svc.cluster.local:9092
+        consumerGroup: browser-agent-worker-group
+        topic: agent.tasks
+        lagThreshold: "5"
+        activationLagThreshold: "1"

@@ -90,3 +90,45 @@
 2. 右側 `Visual Step Replay` 面板自動載入步驟分頁條（Step 1、Step 2 等）。
 3. 點選特定步驟按鈕，即時預覽該步驟之動作類型（navigate/screenshot/etc）、耗時（ms）、Span ID、DOM 結構摘要。
 4. 若該步驟有截圖，自動顯示點選預覽縮圖，點擊可開啟完整解析度 Artifact，加速故障步驟定位。
+
+## Use Case：Scheduled Tasks 定時巡檢排程調度
+
+1. Operator 在 Operations Center 的 `Scheduled Tasks` 卡片建立定期巡檢任務，設定 Cron 表達式（例如每日早上 9:00 `0 9 * * *`）。
+2. 設定任務負載（包含巡檢網站網址、操作步驟、低風險等級）。
+3. 系統排程器背景搶取 Redis 分散式鎖，到達指定時間時自動派發全新 Task 進入流程。
+4. 若配置 `concurrency_policy: skip`，當上一期巡檢仍在執行或待審核時，系統自動跳過本次派發，避免並發阻塞。
+5. 維運人員可隨時點擊 `Run Now` 立即手動派發單次巡檢。
+
+## Use Case：Session Vault 工作階段憑證治理與免登入復用
+
+1. 登入任務完成後，Playwright 提取最新 Cookies 與 localStorage 狀態，以 `storage_state` 格式保存至 Session Vault。
+2. 後續同網域與租戶之巡檢任務自動注入該工作階段，無需重複輸入帳密或觸發登入驗證。
+3. Operations Center 的 `Session Vault` 卡片即時列出所有儲存的工作階段及其有效狀態與過期標記。
+
+## Use Case：Session Vault 憑證外洩一鍵強制撤銷
+
+1. 當安全性定期密碼輪換或偵測到憑證異常時，Admin 登入 Operations Center。
+2. 在 `Session Vault` 列表找到該網域之 Session，點擊 `Revoke` 或呼叫 `DELETE /v1/sessions/{session_name}`。
+3. 系統將該 Storage State 標記為 revoked，並寫入 `session.revoked` 審計日誌。
+4. 後續任務將不再注入該憑證，強制重新執行完整登入驗證。
+
+## Use Case：Full Video Replay 瀏覽器全行程 WebM 錄影播放
+
+1. 建立任務時勾選啟用錄影（或系統預設啟用）。
+2. Worker 在 Playwright 執行全程背景擷取畫面變化，並在任務完成後自動轉化為 WebM 視訊。
+3. 視訊檔安全保存至 S3/Local ArtifactStore，並產生專屬串流 URL。
+4. Operator 在 Operations Center 選取該任務時，右上側 Video 播放器自動載入視訊，可隨選播放、暫停與拖曳進度條，如同真實觀看工程師操作瀏覽器。
+
+## Use Case：OpenTelemetry OTLP Exporter 串流推送至外部 APM
+
+1. 維運人員配置 `OTEL_EXPORTER_OTLP_ENDPOINT`（如 Jaeger、Tempo 或 Datadog Agent 之 OTLP HTTP 端點）。
+2. 系統在背景以非同步隊列批次收集所有 API 與 Worker 之 Span 呼叫鏈。
+3. 累積至批次容量或超時時，自動以標準 OTLP JSON 協定推播至外部監控平台。
+4. 呼叫 `GET /v1/ops/otlp/status` 或在 Operations Center 監控隊列深度與推播總數；支援 Admin `POST /v1/ops/otlp/flush` 強制立即排空推播。
+
+## Use Case：Kubernetes 與 KEDA 自動擴展 Worker 資源池
+
+1. 平台部署於 Kubernetes 叢集，套用 `deploy/k8s/` Kustomization。
+2. KEDA ScaledObject 持續監聽 Kafka 佇列 `agent.tasks.queued` 之 consumer group lag。
+3. 當大量定時巡檢同時觸發導致任務積壓時，KEDA 自動觸發 HPA 將 Worker Pod 副本數從 1 自動水平擴展至多達 10 個 Pod。
+4. 任務排空後，Worker 叢集自動縮容至基準副本數，節省企業運算資源。

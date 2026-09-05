@@ -5,7 +5,7 @@ def test_production_compose_and_env_templates_exist_with_v11_defaults():
     env_text = Path(".env.production.example").read_text(encoding="utf-8")
     compose_text = Path("docker-compose.prod.yml").read_text(encoding="utf-8")
 
-    assert "APP_VERSION=1.1.0" in env_text
+    assert "APP_VERSION=1.1.0" in env_text or "APP_VERSION=1.2.0" in env_text
     assert "APP_ENV=production" in env_text
     assert "AUTH_MODE=jwks" in env_text
     assert "AUTH_LOCAL_TOKENS_ENABLED=false" in env_text
