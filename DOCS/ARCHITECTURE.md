@@ -1,49 +1,64 @@
 # Architecture
 
-BrowserAgent 分成 control plane、data plane 與 governance layer。V1.3 延續 Operations Center、JWKS auth、S3 artifact backend、bulk DLQ operations、Replay-lite、端到端分散式追蹤、Scheduled Tasks、WebM 視訊錄製與生產告警中心，並加入 Enterprise OIDC Code Flow SSO、Session Vault 企業級 KMS 信封加密、啟發式選擇器自我修復引擎、多優先權加權佇列與 Worker 資源池隔離、瀏覽器即時畫面 WebSocket 廣播串流與線上中斷，以及 Enterprise Helm 3 Chart 套件與 GitOps ArgoCD 交付藍圖。
+BrowserAgent is engineered around a decoupled tripartite architecture: the **Control Plane**, the **Data Plane**, and the **Governance & Safety Layer**.
+
+Version **1.4.2** builds upon the foundational capabilities of the Operations Center, multi-tier JWKS/OIDC authentication, S3-compatible artifact storage, Dead Letter Queue (DLQ) quarantine, end-to-end distributed tracing, and Cron task scheduling, while introducing:
+- **Bidirectional Remote Takeover (Human-in-the-Loop)**
+- **Cross-Browser Matrix Execution Engine (Chromium, Firefox, WebKit)**
+- **Zero-Trust Dynamic DLP (Data Loss Prevention) Pipeline**
+- **Multi-Cluster Scheduling Federation & Disaster Recovery**
+- **KMS Cryptographic Session Vault (Envelope Encryption)**
+- **Deterministic Heuristic Selector Self-Healing Cascade**
+- **Full-Motion WebM Video Recording & Live WebSocket Streaming**
+- **Production Kubernetes Manifests & Enterprise Helm 3 Charts**
+
+---
+
+## Architectural Flowchart
 
 ```mermaid
 flowchart TB
-    subgraph ClientLayer["客戶端與營運入口"]
-        Client["Client / curl / API"]
+    subgraph ClientLayer["Client & Ingress Layer"]
+        Client["Client / curl / Automation Scripts"]
         OpsCenter["Operations Center (/operations)"]
         LiveWS["WebSocket Live Stream Viewer"]
-        CronTrigger["Cron / Manual Scheduler Trigger"]
+        CronTrigger["Cron / Manual Dispatch Trigger"]
     end
 
     subgraph ControlPlane["FastAPI Control Plane (API & Scheduler)"]
-        Auth["Auth & RBAC (Local/JWKS/OIDC Code Flow)"]
+        Auth["Auth & RBAC (Local / JWKS / OIDC Code Flow)"]
         Context["Request Context & W3C Traceparent"]
         Scheduler["Scheduled Task Engine (Cron Parser + Redis Lock)"]
-        KMS["KMS Envelope Encryption Engine (Local/AWS/Vault)"]
+        KMS["KMS Envelope Encryption Engine (Local / AWS / Vault)"]
         SessionVault["Session Vault Service (storage_state)"]
-        LiveService["LiveTelemetryService (Broadcast & Abort)"]
-        APIEndpoints["FastAPI Endpoints"]
+        LiveService["LiveTelemetryService (Broadcast & Takeover)"]
+        APIEndpoints["FastAPI Control Plane Endpoints"]
         TraceBuf["TraceBuffer (In-Memory Ring)"]
         OtlpExporter["OtlpBatchSpanExporter (Async HTTP)"]
     end
 
-    subgraph MessagingCluster["訊息佇列與協調層 (Multi-Priority)"]
-        KafkaHigh["Kafka: agent.tasks.high"]
-        KafkaQueued["Kafka: agent.tasks.queued"]
-        KafkaBatch["Kafka: agent.tasks.batch"]
-        KafkaDLQ["Kafka: agent.tasks.dlq"]
-        RedisStore[("Redis (RateLimit, Lock, SchedulerLock)")]
+    subgraph MessagingCluster["Message Queue & Coordination Layer"]
+        KafkaHigh["Kafka Topic: agent.tasks.high"]
+        KafkaQueued["Kafka Topic: agent.tasks.queued"]
+        KafkaBatch["Kafka Topic: agent.tasks.batch"]
+        KafkaDLQ["Kafka Topic: agent.tasks.dlq"]
+        RedisStore[("Redis (RateLimit, WorkerLock, SchedulerLease)")]
     end
 
-    subgraph DataPlane["Worker 資源池 (Dedicated Pools & KEDA)"]
-        WorkerConsumer["worker.consumer (High / Default / Batch Pool)"]
-        TaskRunner["TaskRunner"]
-        Playwright["Playwright BrowserRunner"]
-        SelfHealing["Heuristic Self-Healing Engine"]
-        VideoRecorder["WebM Video Recorder"]
+    subgraph DataPlane["Worker Fleet (Execution Pools & Engines)"]
+        WorkerConsumer["worker.consumer (Priority Partitioning)"]
+        TaskRunner["TaskRunner Governance Loop"]
+        Playwright["Playwright BrowserRunner (Chromium/Firefox/WebKit)"]
+        DLPService["Zero-Trust Dynamic DLP (Mask & Redact)"]
+        SelfHealing["Deterministic Heuristic Healing Cascade"]
+        VideoRecorder["WebM Full Video Recorder"]
         LiveCapture["Live Frame Broadcaster (2 FPS)"]
         SessionCrypto["Session Vault KMS Decryptor"]
     end
 
-    subgraph PersistenceLayer["持久化存儲與外部監控"]
-        PostgresDB[("PostgreSQL (Tasks, ScheduledTasks, Audits)")]
-        ArtifactStore["ArtifactStore (Local FS / MinIO / AWS S3)"]
+    subgraph PersistenceLayer["Persistence & External Telemetry"]
+        PostgresDB[("PostgreSQL (Tasks, Schedules, Audit Trails)")]
+        ArtifactStore["ArtifactStore (Local FS / MinIO / S3)"]
         ExternalAPM["External APM (Jaeger / Tempo / OTel Collector)"]
         ExternalIdP["Enterprise IdP (Keycloak / Okta / Azure AD)"]
     end
@@ -74,6 +89,7 @@ flowchart TB
     TaskRunner --> SessionCrypto
     SessionCrypto --> KMS
     TaskRunner --> Playwright
+    Playwright --> DLPService
     Playwright --> SelfHealing
     Playwright --> LiveCapture
     LiveCapture --> LiveService
@@ -84,173 +100,90 @@ flowchart TB
     TaskRunner --> TraceBuf
 ```
 
-![BrowserAgent Architecture V1.4 Chinese](./assets/browseragent-architecture-v1.4ch.png)
-![BrowserAgent Architecture V1.4 English](./assets/browseragent-architecture-v1.4en.png)
+Architecture Diagram Asset:
+![BrowserAgent Architecture](assets/browseragent-architecture-v1.4en.png)
 
-Architecture image assets:
+Available Diagram Assets:
+- Architecture Diagram: `DOCS/assets/browseragent-architecture-v1.4en.png`
 
-- V1.4 當前繁體中文架構圖：`DOCS/assets/browseragent-architecture-v1.4ch.png`
-- V1.4 當前全英文架構圖：`DOCS/assets/browseragent-architecture-v1.4en.png`
-- V1.3 歷史繁中架構圖（保留封存）：`DOCS/assets/browseragent-architecture-v1.3ch.png`
-- V1.3 歷史全英架構圖（保留封存）：`DOCS/assets/browseragent-architecture-v1.3en.png`
-- V1.2 歷史繁中架構圖（保留封存）：`DOCS/assets/browseragent-architecture-v1.2ch.png`
-- V1.2 歷史全英架構圖（保留封存）：`DOCS/assets/browseragent-architecture-v1.2en.png`
-- V1.1 歷史繁中架構圖（保留封存）：`DOCS/assets/browseragent-architecture-v1.1ch.png`
-- V1.1 歷史全英架構圖（保留封存）：`DOCS/assets/browseragent-architecture-v1.1en.png`
-- V1.0 歷史架構圖（保留封存）：`DOCS/assets/browseragent-architecture-v1.0.png`
+---
 
 ## Runtime Components
 
-| Component | Files | 責任 |
-|---|---|---|
-| Auth/RBAC | `src/browser_agent/auth.py` | local dev token、JWKS verifier、OIDC PKCE Code Flow、Cookie 管理 |
-| Request Context | `src/browser_agent/request_context.py` | `X-Correlation-ID`、`traceparent`、Contextual Trace Binding、OTEL-ready log fields |
-| Tracing & Spans | `src/browser_agent/tracing/` | W3C traceparent 解析與生成、Span 生命週期管理、環形記憶體 TraceBuffer |
-| OTLP Exporter | `src/browser_agent/tracing/exporter.py` | 背景非同步批次推送 Spans 至 OTLP HTTP/JSON 收集器（Jaeger/Datadog） |
-| Alerting & Webhooks | `src/browser_agent/alerts/` | 7 大維運規則即時評估、外部 Webhook（Slack/Discord）非阻塞式轉發 |
-| Scheduler Engine | `src/browser_agent/services/scheduler.py` | 標準 5 欄位 Cron 解析、Redis 分散式搶鎖（TTL 55s）、任務防重入派發 |
-| Federation Manager | `src/browser_agent/services/federation.py` | 多叢集排程節點心跳註冊、分散式租約維護、Leader Election 與容災接管 |
-| Zero-Trust DLP | `src/browser_agent/services/dlp.py` | 敏感 DOM 像素動態模糊遮罩、Bearer Token / API Key 正則過濾與遞迴脫敏 |
-| KMS Crypto | `src/browser_agent/crypto/kms.py` | 信封加密、Local/AWS/Vault 驅動、DEK 輪換、AES-256-GCM 與 AAD 隔離 |
-| Self-Healing Engine | `src/browser_agent/services/self_healing.py` | 啟發式 DOM 相似度比對、Fallback Cascade 備援選擇器解析與自癒標記 |
-| Live Telemetry & HITL | `src/browser_agent/services/live_telemetry.py` | 即時畫面廣播、線上 Abort、雙向遠端接管（Pause/Interact/Resume）指令調度 |
-| Operations API | `src/browser_agent/api.py` | readiness、alerts、traces、task、scheduled task、session、video、live stream、abort、queues、HITL、matrix、DLP、federation endpoints |
-| Operations UI | `src/browser_agent/templates/operations.html` | `/operations` 入口，含 SSO 登入、Live Stream 卡片、KMS 狀態、Queues 監控、自癒標記、雙向接管條、矩陣比較面板、DLP 狀態、同盟拓撲 |
-| Reliability | `src/browser_agent/reliability.py` | rate limit、task lock、scheduler lock、store status |
-| Artifact Store | `src/browser_agent/storage.py` | local 與 S3 artifact backend，支援 screenshot、html、video (webm)、storage_state (json) |
-| Browser Runner | `src/browser_agent/services/browser.py` | 多內核啟動（Chromium/Firefox/WebKit）、DLP 遮罩脫敏、反向接管指令注入、Live 畫面廣播、Abort 中斷攔截、自癒探測與錄影提取 |
-| Worker Consumer | `worker/consumer.py`, `worker/runner.py` | 多優先權主題消費（High/Queued/Batch）、資源池隔離、W3C Context 傳播 |
-| TaskRunner | `src/browser_agent/runner.py` | KMS Session 解密載入、Planner、SkillHub、自癒審計、video 註冊、DLP 標記、人機介入審計、Evaluation |
-| K8s, Helm & GitOps | `deploy/k8s/`, `deploy/helm/`, `deploy/gitops/` | 生產級 Kubernetes 套件、Helm 3 Chart（1.4.0）與 ArgoCD 自動化交付藍圖 |
+| Component | Primary Files | Architectural Responsibilities |
+| :--- | :--- | :--- |
+| **Auth & RBAC** | `src/browser_agent/auth.py` | Issues local dev tokens, validates RS256 JWKS tokens, manages OIDC PKCE Code Flow and HttpOnly session cookies. |
+| **Request Context** | `src/browser_agent/request_context.py` | Binds `X-Correlation-ID`, parses W3C `traceparent`, and manages contextual telemetry attributes. |
+| **Distributed Tracing** | `src/browser_agent/tracing/` | Creates and propagates spans across processes, maintaining an in-memory ring TraceBuffer for instant inspection. |
+| **OTLP Exporter** | `src/browser_agent/tracing/exporter.py` | Background worker asynchronously batching and pushing spans via OTLP HTTP/JSON to external APMs (Jaeger, Datadog). |
+| **Alerting & Webhooks** | `src/browser_agent/alerts/` | Evaluates 7 real-time operational reliability rules; non-blocking asynchronous dispatch to Slack/Discord webhooks. |
+| **Scheduler Engine** | `src/browser_agent/services/scheduler.py` | 5-field Cron evaluation, distributed Redis leasing locks (TTL 55s), and anti-reentrancy task dispatching. |
+| **Federation Manager** | `src/browser_agent/services/federation.py` | Node heartbeat registry, distributed leader lease negotiation, split-brain protection, and failover re-election. |
+| **Zero-Trust Dynamic DLP** | `src/browser_agent/services/dlp.py` | Injects CSS Gaussian blur masks on password fields; regex sanitization of Bearer tokens and API keys in metadata and logs. |
+| **KMS Cryptographic Engine** | `src/browser_agent/crypto/kms.py` | Envelope encryption using AES-256-GCM; drivers for Local Keystore, AWS KMS, and HashiCorp Vault with tenant AAD binding. |
+| **Self-Healing Engine** | `src/browser_agent/services/self_healing.py` | Deterministic 3-tier fallback cascade (semantic attributes, visible text, DOM structural hierarchy) with similarity scoring. |
+| **Live Telemetry & HITL** | `src/browser_agent/services/live_telemetry.py` | Low-latency JPEG frame broadcasting via WebSockets, online task cancellation, and reverse control channel dispatching. |
+| **Control Plane API** | `src/browser_agent/api.py` | FastAPI application exposing tasks, approvals, sessions, videos, schedules, DLP, matrix, and readiness endpoints. |
+| **Operations Console** | `src/browser_agent/templates/operations.html` | Unified web console providing real-time task management, interactive remote takeover, and telemetry dashboards. |
+| **Reliability Primitives** | `src/browser_agent/reliability.py` | Token bucket rate limiting, idempotency key guarantees, distributed task locks, and reliability backend abstractions. |
+| **Artifact Governance** | `src/browser_agent/storage.py` | Local and S3-compatible artifact storage backend with SHA-256 integrity hashing and tenant path containment. |
+| **Browser Execution Runner** | `src/browser_agent/services/browser.py` | Multi-engine Playwright driver (Chromium, Firefox, WebKit), DLP style injection, takeover action consumption, and video capture. |
+| **Worker Consumer Fleet** | `worker/consumer.py`, `worker/runner.py` | Multi-priority Kafka partition consumers (`high`, `queued`, `batch`), dedicated worker pool isolation, and retry loops. |
+| **Task Runner Lifecycle** | `src/browser_agent/runner.py` | Orchestrates KMS credential loading, skill resolution, execution verification, self-healing audits, and verdict evaluations. |
+| **K8s & Helm Blueprints** | `deploy/k8s/`, `deploy/helm/`, `deploy/gitops/` | Production-ready Kubernetes manifests, Enterprise Helm 3 charts, and ArgoCD automated GitOps deployment specs. |
 
+---
 
-## Auth & OIDC SSO Flow
+## Core Execution & Governance Flows
 
-1. `AUTH_MODE=local`：`POST /v1/auth/local-token` 簽發 HS256 local dev token。
-2. `AUTH_MODE=jwks`：API 優先從 `AUTH_JWKS_URL` 取得 JWKS；若未設定，則從 `AUTH_OIDC_ISSUER_URL/.well-known/openid-configuration` 取得 `jwks_uri`。
-3. `OIDC SSO Code Flow`：
-   - 使用者點選 SSO Login，瀏覽器前往 `GET /v1/auth/oidc/login`。
-   - 系統生成 PKCE `code_verifier` 與 `code_challenge`，攜帶隨機 `state` 導向 IdP。
-   - 授權成功導回 `GET /v1/auth/oidc/callback`，完成 code 交換，驗證簽名並簽發 HttpOnly Cookie（`ba_session`）。
-4. Token payload 轉成 `ActorContext`，支援 Bearer Token 與 Cookie 雙通道認證。
-5. `require_roles()` 檢查角色；`admin` 通過所有 role gate。
+### 1. Bidirectional Remote Takeover (HITL) Control Flow
+1. While monitoring live browser streaming in the Operations Center, an operator encounters an interactive roadblock (e.g., CAPTCHA, 2FA challenge).
+2. The operator clicks **Pause Task (Takeover)**, triggering `POST /v1/tasks/{id}/pause`.
+3. The API Control Plane flags the task as paused and notifies the active worker via the `LiveTelemetryService`.
+4. The worker halts its automation loop, enters a poll-wait state (checking every 100ms), and begins draining the reverse action queue.
+5. The operator clicks directly on the stream canvas or enters text in the input box, calling `POST /v1/tasks/{id}/interact`.
+6. The worker extracts the interaction command and directly invokes Playwright page primitives (`page.mouse.click()` or `page.keyboard.type()`).
+7. Upon clearing the challenge, the operator clicks **Resume Task** (`POST /v1/tasks/{id}/resume`). The worker records the intervention duration, sets `task.human_intervened = True`, and seamlessly resumes the autonomous workflow.
 
-## Session Vault KMS Envelope Encryption Flow
+### 2. Zero-Trust Dynamic DLP & Visual Masking Pipeline
+1. **DOM Pixel-Level Blur Masking**:
+   - Before any page rendering or action execution, `ZeroTrustDLPService` injects dynamic CSS rules into the Playwright frame: targeting `input[type="password"]` and configured secret selectors with `filter: blur(8px)`.
+   - Any screenshot artifact, WebM recording frame, or WebSocket broadcast stream captures blurred pixels at the source, preventing cleartext exposure.
+2. **Regex Token Scrubbing**:
+   - Outgoing strings are continuously scanned against high-entropy patterns matching Bearer tokens, JWT signatures, OpenAI API keys, AWS secret keys, and PEM blocks, replacing them with sanitized placeholders (e.g., `[REDACTED_TOKEN]`).
+3. **Recursive Metadata Sanitization**:
+   - Before task metadata, step payloads, or audit trails are persisted to PostgreSQL or emitted to OpenTelemetry spans, dictionary keys containing sensitive names (`password`, `token`, `secret`, `authorization`) are scrubbed recursively.
 
-1. 登入任務完成後，Playwright 執行 `context.storage_state()` 提取 Cookies 與 localStorage。
-2. 系統呼叫 `encrypt_session_vault_payload()`：
-   - 隨機生成 256-bit DEK（Data Encryption Key）。
-   - 以指定 KMS Provider（Local / AWS KMS / HashiCorp Vault）將 DEK 加密為 `encrypted_dek`。
-   - 使用明文 DEK，透過 `AES-256-GCM` 加密 Session 敏感數據，將 `tenant_id` 作為 AAD 綁定。
-   - 封裝密文、IV、Tag 與加密後之 DEK，保存至 ArtifactStore。
-3. 後續任務執行時，TaskRunner 透過 KMS Provider 解密 DEK，校驗 AAD 並解密恢復 Storage State，注入 Playwright Context。
-4. 維運人員可呼叫 `GET /v1/sessions/{name}/validate` 即時執行解密迴路驗證憑證完整性；或一鍵 Revoke 立即註銷。
+### 3. Session Vault KMS Envelope Encryption Flow
+1. Upon successful completion of an authentication task, Playwright invokes `context.storage_state()` to capture cookies and local storage tokens.
+2. The system initiates envelope encryption:
+   - Generates a transient cryptographically secure 256-bit Data Encryption Key (DEK).
+   - Encrypts the DEK using the configured Key Encryption Key (KEK) via the active KMS Provider (Local, AWS KMS, or HashiCorp Vault).
+   - Encrypts the storage state payload using `AES-256-GCM` with the plaintext DEK, binding `tenant_id` as Additional Authenticated Data (AAD) to prevent cross-tenant substitution attacks.
+   - Saves the encrypted ciphertext, nonce, authentication tag, and encrypted DEK metadata to the ArtifactStore.
+3. When subsequent tasks request session reuse, the TaskRunner retrieves the artifact, decrypts the DEK via KMS, validates the AAD tag, decrypts the storage state, and injects it into a fresh Playwright context.
+4. Operators can run integrity audits via `GET /v1/sessions/{name}/validate` or revoke compromised sessions immediately (`DELETE /v1/sessions/{name}`).
 
-## Selector Self-Healing Flow
+### 4. Cross-Browser Matrix Execution Flow
+1. A user submits a cross-browser matrix run via `POST /v1/tasks/matrix`, specifying target engines (`chromium`, `firefox`, `webkit`).
+2. The dispatcher generates a shared `matrix_id` and registers distinct task instances in PostgreSQL, each bound to a specific browser engine.
+3. Assigned workers initialize the corresponding Playwright engine instance with isolated browser contexts, storage states, and viewport parameters.
+4. Upon execution completion, each engine instance records its verdict, duration, DOM self-healing events, screenshots, and video recordings.
+5. The Operations Center aggregates results via `GET /v1/tasks/matrix/{matrix_id}`, displaying a side-by-side comparison of rendering discrepancies, self-healing triggers, and execution durations.
 
-1. 當 Playwright 執行 `click` 或 `fill` 動作且初始 CSS/XPath 選擇器因頁面改版失效率（例如元素不存在或 Timeout）時觸發。
-2. `HeuristicSelfHealingEngine` 啟動三級 Fallback Cascade：
-   - 第一級：語意標籤與屬性比對（如 `data-testid`, `aria-label`, `name`, `id`）。
-   - 第二級：按鈕/連結標籤文字相似度比對。
-   - 第三級：DOM 結構特徵與上下文容器標籤推斷。
-3. 若匹配成功（相似度大於閾值 0.6），自癒引擎動態替換為修復後的選擇器並重新執行動作。
-4. 成功後記錄 `task.self_healed` 審計日誌，在任務步驟 output 標記自癒事件，並在 Operations Center UI 呈現綠色 `Self-Healed ✓` 徽章。
+### 5. Multi-Cluster Scheduling Federation & Disaster Recovery
+1. Each cluster scheduler node initializes with an assigned `node_id` and geographic `region`.
+2. Nodes emit periodic heartbeats (every 5 seconds) to the shared federation registry via `POST /v1/ops/federation/heartbeat`.
+3. Leadership is determined via a distributed Redis lease lock with a 15-second TTL:
+   - Only the designated Leader node executes Cron evaluations and dispatches tasks.
+   - If the Leader node fails to renew its heartbeat within the lease window, healthy standby nodes initiate automatic leader re-election and assume scheduling responsibilities.
+4. SRE administrators can inspect cluster topology (`GET /v1/ops/federation/nodes`) or force leadership reassignment via `POST /v1/ops/federation/re-election` for planned maintenance or disaster recovery drills.
 
-## Priority Queues & Worker Pool Routing Flow
-
-1. 使用者建立任務時指定 `priority` 權重：
-   - `priority > 0`：發布至 `agent.tasks.high` 高優先權急件佇列。
-   - `priority < 0`：發布至 `agent.tasks.batch` 批次低優先權佇列。
-   - `priority == 0`（預設）：發布至 `agent.tasks.queued` 標準常規佇列。
-2. Worker 支援藉由環境變數 `WORKER_POOL_NAME` 與訂閱主題配置專屬 Worker 資源池，實現高優先任務專屬運算資源保障。
-3. Operations Center 提供 `/v1/ops/queues` 即時監控三大主題深度與路由分流指標。
-
-## Live Telemetry Streaming & Abort Flow
-
-1. Playwright 瀏覽器執行期間，背景以設定幀率（2 FPS）捕獲瀏覽器可視區域截圖。
-2. 畫面幀非同步推送至 `LiveTelemetryService` 廣播佇列。
-3. 監控人員透過 Operations Center 建立 WebSocket 連線（`WS /v1/tasks/{id}/live-stream`），低延遲接收 Base64 JPEG 畫面幀並即時渲染於網頁畫布。
-4. 若監控中發現任務異常（如陷入死循環或進入非預期頁面），維運人員點擊 `Abort Task`（呼叫 `POST /v1/tasks/{id}/abort`）。
-5. Worker 在下一步驟前即時捕獲 Abort 信號，安全中斷瀏覽器執行、釋放資源並將任務標記為 `aborted`。
-
-## Scheduled Tasks Flow
-
-1. 使用者於 Operations Center 或 API 建立排程巡檢任務，輸入標準 Cron 表達式（如 `*/10 * * * *`）。
-2. 每分鐘背景排程器嘗試取得 Redis 分散式鎖 `scheduler:lock`（TTL 55s）。
-3. 搶鎖成功之節點計算所有啟動中之 Scheduled Tasks：比對當前時間是否符合 Cron 定時規格。
-4. 檢查並行原則（`concurrency_policy: skip`）：若前次觸發產生的 Task 仍在未完成狀態，則跳過本次派發避免重入。
-5. 派發成功後更新 `last_run_at` 與 `next_run_at`，並建立帶有關聯之全新 Task。
-
-## Full Video Recording Flow
-
-1. 若任務指定或系統預設啟用 `record_video=True`，Playwright 初始化時自動掛載錄影目錄。
-2. 任務各步驟執行期間，背景捕獲完整瀏覽器視窗畫面變更。
-3. 頁面與上下文關閉時，Playwright 自動生成 WebM 格式之高壓縮率錄影檔。
-4. Runner 提取該視訊檔案並以 `media_type="video"` 保存至 ArtifactStore，記錄 Artifact ID。
-5. Operations Center 內嵌 HTML5 Video 播放器，向 `/v1/tasks/{task_id}/video` 發起串流請求並即時播放。
-
-## OpenTelemetry OTLP Streaming Flow
-
-1. 當 API 或 Worker 產生 Trace Span 時，Span 首先記錄至記憶體 TraceBuffer 供 Operations Center 即時檢索。
-2. 若設定 `OTEL_EXPORTER_OTLP_ENDPOINT`，`OtlpBatchSpanExporter` 背景工作者接收到入隊通知。
-3. Exporter 以非同步佇列收集 Spans，累積達 `OTEL_BATCH_SIZE` 或超過逾時閾值時，組裝成標準 OTLP HTTP JSON Payload，非阻塞式批次推送至外部 Jaeger / OpenTelemetry Collector。
-4. 若外部 APM 短暫故障，Exporter 提供丟棄保護與重試，並透過 `/v1/ops/otlp/status` 提供維運透明度。
-
-## Alerting & Webhook Notification Flow
-
-1. Operations Center 載入或輪詢時呼叫 `GET /v1/ops/alerts`。
-2. AlertEvaluator 即時評估 7 大維運規則（DLQ 堆積、任務失敗率、審核積壓、Worker 心跳、DB 延遲、Redis Fallback、Webhook 狀態）。
-3. 當觸發 Warning 或 Critical 告警且設定 `ALERT_WEBHOOK_URL` 時，透過 `WebhookDispatcher` 以背景 non-blocking 執行緒發送 Slack/Discord 相容格式之 Webhook。
-4. 維運管理員可隨時透過 `POST /v1/ops/alerts/test-dispatch` 測試通道連通性，發送紀錄自動寫入 Audit Log。
-
-## Artifact Flow
-
-1. BrowserRunner 產生 screenshot / HTML / video / storage_state。
-2. `ArtifactStore.write_bytes()` 寫入 local 或 S3。
-3. Metadata 寫入 `task_artifacts.metadata`。
-4. `GET /v1/artifacts/{artifact_id}/content` 先檢查 tenant，再從 local 或 S3 讀回 bytes。
-
-## DLQ / Visual Step Replay Flow
-
-1. Worker final failure 寫入 `tasks.metadata.reliability.dlq` 並發布 `agent.tasks.dlq`。
-2. Operator 可查 DLQ tasks。
-3. 單筆或 bulk replay 會把 task 回到 `queued`。
-4. Quarantine 會把 DLQ status 設為 `quarantined`，bulk replay 預設跳過。
-5. `GET /v1/tasks/{task_id}/replay` 回傳視覺化步驟分頁（Visual Step Replay）與向後相容的事件時間線，支援點選步驟即時預覽截圖縮圖、DOM 摘要、執行耗時、WebM 全行程視訊串流與對應的 Span ID。
-
-## Bidirectional Remote Takeover (HITL) Control Flow
-
-1. 監控人員於 Operations Center 觀看即時畫面串流時，若遇到 CAPTCHA 或雙因素驗證，點擊 `Pause Task (Takeover)`。
-2. Control Plane 接收請求（`POST /v1/tasks/{id}/pause`），將暫停旗標與操作者資訊存入 `LiveTelemetryBroadcaster`，並通知當前 Worker 暫停推進。
-3. Worker 在迴圈中每 100ms 檢查一次狀態，進入暫停等待並不斷消費由 Control Plane 轉發的反向操作隊列（`action: click / type / press`）。
-4. 操作人員在前端畫布點擊或在按鍵輸入框輸入文字，透過 `POST /v1/tasks/{id}/interact` 下發動作；Worker 取出動作並直接調用 Playwright 頁面實體注入操作（`page.mouse.click()` 或 `page.keyboard.type()`）。
-5. 人工操作完成後，維運人員點擊 `Resume Task`（`POST /v1/tasks/{id}/resume`）；Worker 退出暫停迴圈，紀錄總介入耗時與操作者身分至 `task.human_intervened = True` 與 Audit Log，恢復自動化推進。
-
-## Cross-Browser Matrix Execution Flow
-
-1. 建立任務時可指定單一核心（`browser_engine: chromium / firefox / webkit`），或呼叫 `POST /v1/tasks/matrix` 一鍵派發矩陣。
-2. Matrix 派發器產生統一之 `matrix_id`，並針對每種指定之瀏覽器核心生成一個獨立的 Task 實體，存入資料庫並發布至佇列。
-3. Worker 節點收到任務後，檢驗 `task.browser_engine`：
-   - 啟動對應之 Playwright 實體：`playwright.chromium`、`playwright.firefox` 或 `playwright.webkit`。
-   - 各核心採用獨立的 Browser Context，確保 Cookie、Session 與 User-Agent 隔離。
-4. 任務完成後，各自記錄執行耗時、評估 Verdict、截圖與錄影 Artifact。
-5. Operations Center 呼叫 `GET /v1/tasks/matrix/{matrix_id}` 聚合比對跨引擎差異，列出渲染差異、DOM 自癒表現與執行耗時。
-
-## Zero-Trust Dynamic DLP & Visual Masking Pipeline
-
-1. **DOM 像素動態模糊遮罩**：
-   - 當頁面載入或執行動作前，`ZeroTrustDLPService` 自動向 Playwright 頁面動態注入 CSS 防護樣式：針對 `input[type="password"]`、機密識別選擇器等動態疊加 `filter: blur(8px)` 高斯模糊。
-   - 任何由 WebSocket 即時廣播串流截取之畫面幀、截圖 Artifact 或 WebM 視訊錄製，機密欄位在源頭即為模糊像素，無明文洩漏風險。
-2. **文字正則動態脫敏**：
-   - 系統即時監控所有文字串流，比對 Bearer Token、JWT、API Key（OpenAI / AWS / Private Keys）等正則特徵，動態替換為 `[REDACTED_TOKEN]` 或 `sk-[REDACTED_KEY]`。
-3. **Metadata 遞迴過濾**：
-   - 在任務 Metadata、步驟輸入輸出與 Audit Logs 寫入資料庫或對外回傳前，遞迴過濾所有包含 `password`、`token`、`secret`、`authorization` 等機密鍵值，確保資料庫與 APM Spans 零敏感資訊殘留。
-
-## Multi-Cluster Scheduling Federation & DR Failover Flow
-
-1. 各叢集排程節點在啟動時自動產生或指派 `node_id` 與所屬 `region`（如 `ap-northeast-1`）。
-2. 背景調度器每 5 秒向同盟註冊中心（Redis 或 Central DB）發送心跳（`POST /v1/ops/federation/heartbeat`），並更新存活時間戳。
-3. 排程主導權（Leader Lease）採分散式搶佔租約（TTL 15 秒）：
-   - 只有持有有效租約之 Leader 節點才會觸發 Cron 表達式解析與任務派發。
-   - 若 Leader 節點心跳超過租約時間未更新，備援節點在下次心跳週期自動晉升為新 Leader，無縫接管未完成之定時巡檢。
-4. 維運管理員可隨時透過 Operations Center 檢視節點拓撲（`GET /v1/ops/federation/nodes`），或由管理員呼叫 `POST /v1/ops/federation/re-election` 強制轉移主導權進行維護演練。
+### 6. Heuristic Selector Self-Healing Cascade
+1. Triggered when Playwright encounters a locator timeout or non-existent selector due to dynamic frontend modifications.
+2. The `HeuristicSelfHealingEngine` initiates a 3-tier fallback cascade:
+   - **Tier 1 (Semantic Attributes)**: Analyzes resilient identifiers (`data-testid`, `aria-label`, `name`, `id`).
+   - **Tier 2 (Visible Text Similarity)**: Computes string similarity against button and link text.
+   - **Tier 3 (DOM Structural Heuristics)**: Infers target elements based on parent container hierarchies and sibling structures.
+3. If the computed similarity exceeds the safety threshold (`0.6`), the engine adopts the recovered selector and re-executes the step.
+4. Emits a `task.self_healed` audit event, records the recovery details in step metadata, and highlights the step with a green badge in the Operations Center.

@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "browser-agent"
-    app_version: str = "1.4.0"
+    app_version: str = "1.4.2"
     app_env: str = "local"
     app_log_level: str = "INFO"
     app_secret_key: str = "change-me"
