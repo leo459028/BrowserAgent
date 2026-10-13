@@ -6,7 +6,7 @@ replicaCount:
 image:
   repository: browser-agent
   pullPolicy: IfNotPresent
-  tag: "1.4.0"
+  tag: "1.4.2"
 
 imagePullSecrets: []
 nameOverride: ""

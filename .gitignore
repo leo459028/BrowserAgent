@@ -1,12 +1,44 @@
+# Python & Bytecode
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
 .pytest_cache/
-.venv/
-.env
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 dist/
 build/
 *.egg-info/
+
+# Environments & Secrets
+.venv/
+env/
+venv/
+ENV/
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Persistent Data & Local Artifacts
 data/
 *.zip
 scratch/
 tests/artifacts/
+/tmp/browser-agent/
+
+# Logs & Temporary files
+*.log
+*.sqlite3
+
+# IDEs & Operating Systems
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini

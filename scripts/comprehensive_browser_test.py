@@ -86,7 +86,7 @@ def main():
     log(f"  Reliability Store: {checks.get('reliability', {}).get('type')}")
     log(f"  Artifact Backend: {checks.get('artifact_backend', {}).get('backend')}")
     log(f"  Kubernetes Platform: {checks.get('kubernetes', {}).get('platform')}")
-    assert app_info.get("version") in ("1.3.0", "1.4.0")
+    assert app_info.get("version") in ("1.3.0", "1.4.0", "1.4.2")
     log(f"✓ Operations Readiness 檢驗通過 (版本 {app_info.get('version')})")
 
     # 3. 告警中心、KMS 與優先佇列檢驗
