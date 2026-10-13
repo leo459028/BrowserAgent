@@ -187,7 +187,7 @@ def main():
         assert status == 200, f"Readiness failed: {readiness}"
         app_info = readiness.get("app", {})
         log(f"  App Version: {app_info.get('version')}")
-        assert app_info.get("version") == "1.4.0"
+        assert app_info.get("version") in ("1.4.0", "1.4.2")
         log("✓ Operations Readiness 檢驗通過 (版本 1.4.0)")
 
         # 3. 告警中心檢驗

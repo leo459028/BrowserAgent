@@ -1,109 +1,132 @@
-# Security And Policy
+# Security, AI Safety & Governance Policies
 
-## Auth/RBAC
+This document specifies the security boundaries, AI agent safety guardrails, Role-Based Access Control (RBAC) matrix, Zero-Trust Data Loss Prevention (DLP) architecture, and cryptographic key governance enforced by BrowserAgent.
 
-V1.4 支援多元且嚴密的企業級認證模式：
+---
 
-- `AUTH_MODE=local`：使用 `/v1/auth/local-token` 產生 local dev HS256 token（僅限本機開發與測試）。
-- `AUTH_MODE=jwks`：使用 `AUTH_JWKS_URL` 驗證 RS256/JWKS token；若未設定 `AUTH_JWKS_URL`，可用 `AUTH_OIDC_ISSUER_URL` discovery 取得 `jwks_uri`。
-- `Enterprise OIDC SSO Code Flow`：
-  - 標準 OAuth 2.0 / OpenID Connect Authorization Code Flow 搭配 **PKCE（RFC 7636）**。
-  - 使用高熵隨機 `code_verifier` 與 SHA-256 `code_challenge`，杜絕授權碼攔截攻擊。
-  - 隨機生成防偽 `state`，有效防範跨站請求偽造（CSRF）。
-  - 授權成功後簽發之會話封裝於 **HttpOnly、SameSite 嚴格模式** 之安全 Cookie（`ba_session`），防範 XSS 竊取憑證。
+## AI Agent Safety & Threat Model
 
-Roles 權限矩陣：
+Deploying autonomous browser agents in production environments presents significant risks if left unconstrained. BrowserAgent enforces a defense-in-depth safety architecture:
 
-- `creator`：建立 task、讀 task/artifact、建立/修改 scheduled task、**一鍵派發跨瀏覽器矩陣任務（`POST /v1/tasks/matrix`）**。
-- `approver`：讀 task/audit/artifact、approve task。
-- `operator`：讀 task/audit/artifact/metrics、readiness、alerts、traces、DLQ operations、觸發排程、驗證 Session、線上中止任務（Abort）、**執行雙向即時接管（Pause/Interact/Resume）、檢視 DLP 狀態與同盟拓撲**。
-- `admin`：全部權限（含 alerts test-dispatch、Skill 註冊、一鍵強制撤銷 Session、排空 OTLP、**多叢集同盟強制重選 Leader（`POST /v1/ops/federation/re-election`）** 等敏感操作）。
+```
++---------------------------------------------------------------------------------------------------+
+|                                     INCOMING AGENT TASK PAYLOAD                                   |
++---------------------------------------------------------------------------------------------------+
+                                                  |
+                                                  v
+                      [ Domain Boundary Gate ] -- (Strict ALLOWLIST_DOMAINS)
+                                                  |
+                                                  v
+                      [ Prompt Injection & Risk Gate ] -- (Evaluate Risk Tiers)
+                                                  |
+                          +-----------------------+-----------------------+
+                          |                                               |
+                          | (Risk <= Low)                                 | (Risk >= Medium)
+                          v                                               v
+                 [ Automatic Queue ]                          [ Human-in-the-Loop Approval Gate ]
+                          |                                               | (Operator Approval)
+                          +-----------------------+-----------------------+
+                                                  |
+                                                  v
+                                      [ Worker Playwright Execution ]
+                                                  |
+                                                  +---> [ Zero-Trust Dynamic DLP CSS Blurring ]
+                                                  +---> [ Real-Time Reverse Takeover Channel ]
+                                                  +---> [ Deterministic Heuristic Self-Healing ]
+                                                  |
+                                                  v
+                                    [ Sanitized Artifact & Audit Store ]
+                                  (AES-256-GCM Envelope Encryption + Redaction)
+```
 
-## Zero-Trust 動態資料防洩與像素遮罩（Zero-Trust DLP Security & Visual Masking）
+---
 
-為落實端到端零信任資料保護，V1.4 引入多層防洩機制：
-1. **源頭動態 CSS 像素遮罩**：
-   - 在 Playwright 初始化與頁面動態導航時，自動向頁面注入 CSS 模糊防護：針對 `input[type="password"]`、機密識別選擇器等動態疊加 `filter: blur(8px) !important` 高斯模糊。
-   - 所有即時畫面廣播（WebSocket Live Stream）、全行程視訊錄影（WebM Video）與截圖 Artifact，敏感欄位在物理像素層次即被模糊遮蔽，即使錄影遭外洩亦無法還原原始密碼。
-2. **文字正則動態脫敏**：
-   - 系統即時監控所有字串與日誌輸出，比對 Bearer Token、JWT、API Key（OpenAI / AWS / Private Keys）等正則特徵，動態替換為 `[REDACTED_TOKEN]` 或 `sk-[REDACTED_KEY]`。
-3. **Metadata 遞迴過濾**：
-   - 在任務 Metadata、步驟輸入輸出與 Audit Logs 寫入資料庫或對外回傳前，遞迴過濾所有包含 `password`、`token`、`secret`、`authorization` 等機密鍵值，確保資料庫與 APM Spans 零敏感資訊殘留。
+## Authentication & Role-Based Access Control (RBAC)
 
-## 雙向反向操作通道安全治理（Bidirectional HITL Control Channel Governance）
+BrowserAgent supports multiple enterprise identity modes:
 
-1. **同租戶隔離**：`POST /v1/tasks/{id}/pause`、`/interact`、`/resume` 端點均強制校驗 Token 租戶與任務租戶是否嚴格相符，嚴禁跨租戶注入操作指令。
-2. **動作安全邊界校驗**：
-   - 僅允許合法的指令型別（`click`、`type`、`press`）。
-   - 滑鼠座標強制校驗是否落在可視視窗內（非負浮點數），避免非預期越界溢位。
-   - 鍵盤文字輸入經 DLP 正則掃描與消毒，避免注入惡意腳本。
-3. **超時自動防呆防護**：
-   - 人工暫停狀態具備最大超時上限（`HITL_PAUSE_TIMEOUT_SECONDS`，預設 600 秒）。若維運人員暫停後未在時限內恢復，系統將自動強制退出暫停狀態並記錄異常超時。
-4. **完整且不可抵賴之審計軌跡**：
-   - 每次介入均詳實記錄操作者帳號、IP、介入起訖時間戳、總介入耗時與執行動作數至 `task.human_intervened = True` 與 Audit Log。
+- **`AUTH_MODE=local`**: Issues HS256 developer tokens signed with `APP_SECRET_KEY`. Restricted exclusively to local development and testing.
+- **`AUTH_MODE=jwks`**: Verifies external RS256/JWKS tokens via `AUTH_JWKS_URL` or auto-discovered through `AUTH_OIDC_ISSUER_URL`.
+- **Enterprise OIDC Authorization Code Flow with PKCE**:
+  - Implements OAuth 2.0 / OpenID Connect with **PKCE (RFC 7636)**.
+  - Generates high-entropy random `code_verifier` and SHA-256 `code_challenge`, eliminating authorization code interception vulnerabilities.
+  - Generates cryptographically secure `state` parameters to prevent Cross-Site Request Forgery (CSRF).
+  - Encapsulates authenticated sessions in **HttpOnly, SameSite=Strict** secure cookies (`ba_session`), shielding credentials against XSS theft.
 
-## 多叢集同盟與分散式排程安全（Multi-Cluster Federation Governance）
+### RBAC Permission Matrix
 
-1. **租約式互斥搶鎖**：Leader 節點必須定時刷新 Redis 分散式租約（TTL 15 秒），租約過期則自動喪失派發權，杜絕因網路延遲造成的雙主腦裂（Split-Brain）。
-2. **強制重選權限控管**：`POST /v1/ops/federation/re-election` 強制限 `admin` 角色，防範任意操作員擅自中斷叢集排程。
-3. **區域隔離**：各同盟節點記錄所屬 `region`，支援在地合規政策與資料不出境要求。
+| Operation / Endpoint Group | `creator` | `approver` | `operator` | `admin` |
+| :--- | :---: | :---: | :---: | :---: |
+| Create Task / Batch Matrix Task | :white_check_mark: | :x: | :x: | :white_check_mark: |
+| Approve Pending Task | :x: | :white_check_mark: | :x: | :white_check_mark: |
+| Read Task / Audits / Artifacts | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| Scheduled Tasks (Create / Edit / Pause) | :white_check_mark: | :x: | :x: | :white_check_mark: |
+| Scheduled Tasks (Run Now / Trigger) | :white_check_mark: | :x: | :white_check_mark: | :white_check_mark: |
+| Inspect Telemetry / Traces / Alerts | :x: | :x: | :white_check_mark: | :white_check_mark: |
+| HITL Takeover (Pause / Interact / Resume) | :x: | :x: | :white_check_mark: | :white_check_mark: |
+| Online Task Abort | :x: | :x: | :white_check_mark: | :white_check_mark: |
+| DLQ Single & Bulk Replay / Quarantine | :x: | :x: | :white_check_mark: | :white_check_mark: |
+| Session Vault Validate | :x: | :x: | :white_check_mark: | :white_check_mark: |
+| Session Vault One-Click Revoke | :x: | :x: | :x: | :white_check_mark: |
+| Alert Webhook Test Dispatch | :x: | :x: | :x: | :white_check_mark: |
+| Federation Forced Re-election | :x: | :x: | :x: | :white_check_mark: |
+| Register SkillHub Capability | :x: | :x: | :x: | :white_check_mark: |
 
-## Policy
+---
 
-Task create 仍會檢查 allowlist domains、risk level、sensitive instruction 與 prompt-injection pattern。Non-allowlisted domain 會 blocked；需要人工審核的 task 進入 `pending_approval`。
+## Zero-Trust Dynamic DLP (Data Loss Prevention)
 
-## Session Vault KMS 信封加密與憑證治理
+To prevent confidential enterprise secrets from leaking into execution artifacts, video recordings, or external telemetry pipelines, BrowserAgent implements a 3-tier DLP architecture:
 
-- Session Vault 保存之 Playwright `storage_state` 包含真實網站之 Cookies 與登入狀態（localStorage），屬於頂級敏感憑證。
-- **KMS 信封加密（Envelope Encryption）**：
-  - 每次持久化前，系統由密碼學安全隨機產生獨立的 256-bit DEK（Data Encryption Key）。
-  - 明文 DEK 使用 `AES-256-GCM` 驗證加密 Session 資料。
-  - **強租戶隔離防篡改**：將 `tenant_id` 作為 AES-GCM 的 AAD（Additional Authenticated Data）綁定於密文中，若發生跨租戶非法調閱或密文置換，GCM 驗證直接拋出例外拒絕解密。
-  - DEK 本身透過主金鑰（KMS Master Key，支援 Local、AWS KMS 或 HashiCorp Vault）加密保存。
-  - 支援無痛金鑰輪換與 `/v1/sessions/{name}/validate` 即時解密迴路校驗。
-- 工作階段查詢（`GET /v1/sessions`）僅限 `operator` 與 `admin`。
-- 工作階段強制撤銷（`DELETE /v1/sessions/{session_name}`）強制需要 `admin` 角色，並自動寫入 `session.revoked` 審計日誌。一旦標記為已撤銷，所有 Worker 立即停止重用該憑證。
+1. **Source-Level CSS Gaussian Blur Masking**:
+   - During Playwright page initialization and dynamic navigation, the DLP service automatically injects protective CSS rules into DOM frames: targeting `input[type="password"]` and configured secret selectors with `filter: blur(8px) !important`.
+   - All live WebSocket frames, WebM recordings, and PNG screenshots capture blurred pixels at the source. Even if recorded media is exfiltrated, cleartext credentials cannot be recovered.
+2. **Dynamic Regex Secret Redaction**:
+   - Outbound text streams, step outputs, and terminal logs are continuously filtered against high-entropy patterns (Bearer Tokens, JWTs, OpenAI API keys, AWS access keys, PEM certificates), replacing matches with `[REDACTED_TOKEN]` or `sk-[REDACTED_KEY]`.
+3. **Recursive Metadata Sanitization**:
+   - Before task metadata, step payloads, or audit trails are persisted to PostgreSQL or emitted to OpenTelemetry spans, dictionary keys containing sensitive names (`password`, `token`, `secret`, `authorization`) are scrubbed recursively.
 
-## 線上中斷與即時畫面串流安全（Abort & Live Stream Governance）
+---
 
-- 任務線上緊急中斷端點 `POST /v1/tasks/{task_id}/abort` 需 `operator` 或 `admin` 角色，中斷時安全關閉 Playwright Context 與 Page，避免資源洩漏與孤兒進程殘留，並寫入 `task.aborted` 審計日誌。
-- WebSocket 即時畫面廣播端點 `WS /v1/tasks/{task_id}/live-stream` 強制校驗 Bearer Token 或 HttpOnly Cookie，且嚴格落實同租戶邊界隔離，杜絕跨租戶偷窺畫面。
+## Bidirectional Remote Takeover (HITL) Governance
 
-## Alerts & Tracing Controls
+1. **Strict Tenant Scoping**: All takeover endpoints (`POST /v1/tasks/{id}/{pause,interact,resume}`) enforce strict matching between token tenant and task tenant, preventing cross-tenant interaction injection.
+2. **Action Boundary Validation**:
+   - Restricts commands strictly to validated action types (`click`, `type`, `press`).
+   - Mouse click coordinates (X, Y) are strictly validated against active viewport boundaries.
+   - Text keystrokes undergo DLP regex sanitization before injection.
+3. **Automated Timeout Protection**:
+   - Paused takeover states enforce a maximum timeout (`REMOTE_TAKEOVER_TIMEOUT_SECONDS`, default: 300s). If an operator abandons a paused session, the system automatically aborts or resumes the workflow, logging an audit exception.
+4. **Non-Repudiation Audit Logging**:
+   - Every human intervention records operator identity, IP address, timestamps, intervention duration, and discrete actions performed.
 
-- 告警中心查詢 `GET /v1/ops/alerts` 與追蹤查詢 `GET /v1/ops/traces/{trace_id}` 僅限 `operator` 與 `admin`。
-- 外部告警測試派發 `POST /v1/ops/alerts/test-dispatch` 僅限 `admin` 角色，且每次呼叫皆強制寫入 `alert.test_dispatched` 審計日誌，避免 Webhook 遭濫用。
-- 外部 Webhook 發送採非阻塞背景執行緒與超時限制（預設 3 秒），防止第三方外部服務連線異常阻斷 API 或 Worker 主進程。
-- 分散式追蹤 Span Attributes 與 TraceBuffer 不記錄使用者密碼、Token 或機密 Authorization Headers。
-- OTLP Exporter 非同步推送僅導出結構化 Spans，提供隊列保護與錯誤丟棄機制，不阻斷業務流程。
+---
 
-## Scheduled Tasks Security
+## Session Vault KMS Envelope Encryption
 
-- 定時排程建立與屬性修改（`POST /v1/scheduled-tasks` 與 `PATCH /v1/scheduled-tasks/{schedule_id}`）僅限 `creator` 或 `admin` 角色。
-- 定時排程停用可透過 `PATCH /v1/scheduled-tasks/{schedule_id}` 將 `is_active` 設為 `false`。
-- 手動立即觸發排程（`POST /v1/scheduled-tasks/{schedule_id}/run`）支援 `creator`、`operator` 或 `admin`；手動評估排程（`POST /v1/scheduled-tasks/evaluate`）僅限 `operator` 或 `admin`。
-- 排程派發任務必須經過相同的 Policy Engine 與網域白名單（Allowlist Domains）檢查，嚴防透過排程繞過安全性防護。
+Playwright `storage_state` captures live authentication cookies and `localStorage` tokens, constituting high-value secrets.
 
-## Video Recording Governance
+- **Envelope Encryption**:
+  - Each session payload is encrypted using a unique, cryptographically random 256-bit Data Encryption Key (DEK).
+  - The plaintext DEK encrypts the session state using `AES-256-GCM`.
+  - **Tenant Isolation via AAD**: Binds the `tenant_id` as Additional Authenticated Data (AAD) in the AES-GCM cipher. Any cross-tenant tampering or token substitution fails decryption verification immediately.
+  - The DEK itself is encrypted using a Key Encryption Key (KEK) managed by the designated KMS provider (Local Keystore, AWS KMS, or HashiCorp Vault).
+- **Session Revocation**: One-click revocation (`DELETE /v1/sessions/{session_name}`) requires `admin` role, logs a `session.revoked` audit entry, and immediately prevents worker reuse.
 
-- WebM 全行程錄影包含瀏覽器完整渲染與動態畫面。
-- 視訊串流端點 `GET /v1/tasks/{task_id}/video` 強制校驗 Bearer Token 或 Cookie 與租戶歸屬，嚴防未經授權之第三方存取。
-- 視訊資料依據 Artifact 儲存後端保留政策管理，支援 S3 Lifecycle 自動清理過期視訊。
+---
 
-## Artifact Access
+## Policy Engine & Network Egress Boundaries
 
-Artifact content endpoint 必須通過 tenant check。Local backend 會檢查 path 在 `ARTIFACT_BASE_PATH` 內；S3 backend 只讀 artifact metadata 指向的 `s3://bucket/key`。
+- **Strict Domain Boundary**: Tasks cannot navigate outside `ALLOWLIST_DOMAINS`. Unlisted domain requests are rejected immediately.
+- **Risk Evaluation Gates**: Tasks evaluated with elevated risk levels automatically enter `pending_approval` and require authorized operator sign-off before execution.
+- **Prompt Injection Defense**: Evaluates task instructions against adversarial injection signatures before plan dispatch.
 
-## DLQ Controls
+---
 
-- DLQ list、single replay、bulk replay、quarantine 只允許 operator/admin。
-- Bulk replay 會跳過 quarantined tasks。
-- Quarantine 會寫入 `task.dlq_quarantined` audit。
+## Production Security Checklist
 
-## Production Notes
-
-- Production 不應使用預設 `APP_SECRET_KEY`。
-- Production 若仍開啟 local dev token，`/v1/ops/readiness` 會回 `not_ready`。
-- Production 若使用預設 `APP_SECRET_KEY`、未設定 JWKS/OIDC、未設定 Kafka、未使用 Redis reliability store 或未使用 S3 artifact backend，`/v1/ops/readiness` 也會回 `not_ready`。
-- V1.4 原生內建 Enterprise OIDC PKCE Code Flow、Session Vault KMS 信封加密與 Zero-Trust 動態資料防洩機制，可直接對接企業級 IdP（Keycloak、Okta、Azure AD）與雲端金鑰管理服務（AWS KMS、HashiCorp Vault）。
-- 部署於 Kubernetes 或 Helm 時，強烈建議將敏感參數（如密鑰、S3 憑證、DB 密碼）抽離至 Kubernetes Secrets，並透過雲端 KMS 加密。
+- [ ] Do not use default `APP_SECRET_KEY` in production environments.
+- [ ] Set `AUTH_LOCAL_TOKENS_ENABLED=false` and configure `AUTH_MODE=jwks` with a production IdP.
+- [ ] Ensure `RELIABILITY_STORE=redis` and `ARTIFACT_BACKEND=s3`.
+- [ ] For Kubernetes deployments, mount sensitive variables from Kubernetes Secrets backed by cloud KMS.
+- [ ] Enable `DLP_ENABLED=true`, `DLP_MASK_PASSWORDS=true`, and `DLP_REDACT_TOKENS=true`.

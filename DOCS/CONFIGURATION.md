@@ -1,116 +1,122 @@
-# Configuration
+# Configuration Guide
 
-設定由 [src/browser_agent/config.py](../src/browser_agent/config.py) 的 Pydantic settings 讀取，可來自 `.env` 或 Docker Compose environment。
+Configuration settings in BrowserAgent are managed through Pydantic BaseSettings in [src/browser_agent/config.py](../src/browser_agent/config.py). Settings can be injected via `.env` files, shell environment variables, or container orchestrators (Docker Compose, Kubernetes ConfigMaps/Secrets).
 
-## Environment Variables
+---
 
-| Variable | Example | 說明 |
-|---|---|---|
-| `APP_NAME` | `browser-agent` | FastAPI app title |
-| `APP_VERSION` | `1.4.0` | App/API version |
-| `APP_ENV` | `local` | Environment label |
-| `DEFAULT_BROWSER_ENGINE` | `chromium` | 預設瀏覽器核心：`chromium`、`firefox`、`webkit` |
-| `DLP_ENABLED` | `true` | 是否啟用 Zero-Trust 動態資料防洩保護 |
-| `DLP_MASK_PASSWORDS` | `true` | 是否針對密碼輸入框注入 CSS 高斯模糊遮罩 |
-| `DLP_REDACT_TOKENS` | `true` | 是否對 Bearer Token、API Keys 進行正則動態脫敏 |
-| `FEDERATION_ENABLED` | `true` | 是否啟用多叢集排程同盟與容災接管 |
-| `FEDERATION_NODE_ID` | `cluster-node-primary` | 當前節點於同盟中的唯一識別名稱 |
-| `FEDERATION_REGION` | `ap-northeast-1` | 當前節點所屬地理區域識別 |
-| `FEDERATION_HEARTBEAT_INTERVAL_SECONDS` | `5` | 同盟節點心跳維持租約週期（秒） |
-| `FEDERATION_LEASE_TTL_SECONDS` | `15` | 同盟 Leader 排程租約過期時間（秒） |
-| `HITL_ENABLED` | `true` | 是否啟用雙向即時遠端接管與人機協作通道 |
-| `HITL_PAUSE_TIMEOUT_SECONDS` | `600` | 人工接管暫停之最長等待超時時間（秒） |
-| `APP_SECRET_KEY` | `change-me` | local token HS256 secret；正式環境不可使用預設值 |
-| `AUTH_ENABLED` | `true` | 是否啟用 Bearer token 驗證 |
-| `AUTH_MODE` | `local` | `local` 或 `jwks` |
-| `AUTH_JWKS_URL` | `https://idp.example/jwks.json` | JWKS verifier URL |
-| `AUTH_OIDC_ISSUER_URL` | `https://idp.example` | OIDC issuer URL；未設定 `AUTH_JWKS_URL` 時用 discovery 取得 `jwks_uri` |
-| `AUTH_JWKS_CACHE_TTL_SECONDS` | `300` | JWKS/OIDC JSON 快取秒數 |
-| `AUTH_JWKS_REQUEST_TIMEOUT_SECONDS` | `5` | JWKS/OIDC HTTP timeout 秒數 |
-| `AUTH_LOCAL_TOKENS_ENABLED` | `true` | 是否啟用 `/v1/auth/local-token` |
-| `AUTH_JWT_ISSUER` | `browser-agent-local` | JWT `iss` |
-| `AUTH_JWT_AUDIENCE` | `browser-agent-api` | JWT `aud` |
-| `AUTH_OIDC_CLIENT_ID` | `browser-agent-client` | OIDC SSO 授權 Client ID |
-| `AUTH_OIDC_CLIENT_SECRET` | `secret` | OIDC SSO 授權 Client Secret |
-| `AUTH_OIDC_REDIRECT_URI` | `http://localhost:8000/v1/auth/oidc/callback` | OIDC SSO Callback 回調 URL |
-| `AUTH_OIDC_SCOPES` | `openid profile email` | OIDC 请求之授權範圍 Scopes |
-| `AUTH_COOKIE_NAME` | `ba_session` | 登入會話 HttpOnly Cookie 名稱 |
-| `KMS_PROVIDER` | `local` | KMS 驅動提供者：`local`、`aws_kms`、`vault` |
-| `KMS_KEY_ID` | `session-vault-v1` | KMS 主加密金鑰 Identifier |
-| `KMS_SECRET_KEY` | `local-kms-master-key-32-chars!` | Local KMS 主金鑰字串（至少 32 字元） |
-| `KMS_REGION` | `us-east-1` | AWS KMS 區域 |
-| `KMS_VAULT_ADDR` | `http://vault:8200` | HashiCorp Vault 伺服器位址 |
-| `KMS_VAULT_TOKEN` | `vault-token` | HashiCorp Vault 存取 Token |
-| `KAFKA_TOPIC_HIGH` | `agent.tasks.high` | 高優先權任務主題（priority > 0） |
-| `KAFKA_TOPIC_QUEUED` | `agent.tasks.queued` | 標準常規任務主題（priority == 0） |
-| `KAFKA_TOPIC_BATCH` | `agent.tasks.batch` | 批次低優先權主題（priority < 0） |
-| `WORKER_POOL_NAME` | `default` | Worker 資源池識別名稱（如 `high-priority`, `batch-pool`） |
-| `TELEMETRY_STREAM_ENABLED` | `true` | 是否啟用 WebSocket 即時畫面廣播串流 |
-| `TELEMETRY_STREAM_FPS` | `2` | 畫面幀廣播速率（每秒幀數，預設 2 FPS） |
-| `SELF_HEALING_ENABLED` | `true` | 是否啟用啟發式多維選擇器自我修復引擎 |
-| `SELF_HEALING_SIMILARITY_THRESHOLD` | `0.6` | 自癒標籤相似度匹配門檻（0.0 ~ 1.0） |
-| `DATABASE_URL` | `postgresql+psycopg://agent:agent@postgres:5432/agent` | SQLAlchemy database URL |
-| `REDIS_URL` | `redis://redis:6379/0` | Redis URL |
-| `RELIABILITY_STORE` | `redis` | `memory` 或 `redis` |
-| `KAFKA_BOOTSTRAP_SERVERS` | `kafka:9092` | Kafka bootstrap servers |
-| `ARTIFACT_BACKEND` | `s3` | `local` 或 `s3` |
-| `ARTIFACT_BASE_PATH` | `/data/artifacts` | Local artifact root path |
-| `MINIO_ENDPOINT` | `minio:9000` | MinIO/S3-compatible endpoint |
-| `MINIO_ACCESS_KEY` | `minio` | S3 access key |
-| `MINIO_SECRET_KEY` | `minio12345` | S3 secret key |
-| `MINIO_BUCKET` | `browser-agent` | Artifact bucket |
-| `ALLOWLIST_DOMAINS` | `example.com,example.org` | Browser allowlist |
-| `TASK_CREATE_RATE_LIMIT_PER_MINUTE` | `60` | Task create rate limit |
-| `TASK_LOCK_TTL_SECONDS` | `300` | Worker task lock TTL |
-| `MAX_TASK_RETRIES` | `2` | Worker final failure 前最大嘗試次數 |
-| `WORKER_SERVICE_ID` | `worker-local` | Worker audit actor identity |
-| `WORKER_RECORD_VIDEO_DEFAULT` | `false` | Worker 是否預設對所有任務錄製全行程 WebM 視訊 |
-| `SCHEDULER_ENABLED` | `true` | 是否啟用 Scheduled Tasks 定時巡檢調度引擎 |
-| `DLQ_TOPIC` | `agent.tasks.dlq` | DLQ topic |
-| `ALERT_WEBHOOK_URL` | `https://hooks.slack.com/services/...` | 外部告警 Webhook 接收端點（支援 Slack / Discord 相容 JSON） |
-| `ALERT_WEBHOOK_TIMEOUT_SECONDS` | `3.0` | 外部 Webhook 呼叫超時上限（秒） |
-| `ALERT_EVALUATION_INTERVAL_SECONDS` | `60` | 告警中心自動評估週期（秒） |
-| `ALERT_FAILURE_RATE_THRESHOLD` | `0.3` | 觸發 Warning 告警之任務失敗率閾值（預設 30%） |
-| `ALERT_DLQ_THRESHOLD` | `5` | 觸發 Warning 告警之 DLQ 失敗任務積壓數量閾值 |
-| `ALERT_PENDING_APPROVAL_THRESHOLD` | `10` | 觸發 Info 告警之待人工審核任務數量閾值 |
-| `OTEL_ENABLED` | `false` | 是否啟用 OTLP Exporter 即時串流推送 |
-| `OTEL_SERVICE_NAME` | `browser-agent` | OTEL service name 與 log correlation service 名稱 |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4318/v1/traces` | OTLP HTTP/JSON 收集端點 |
-| `OTEL_RESOURCE_ATTRIBUTES` | `service.namespace=browser-agent` | OTLP Resource attributes 鍵值對 |
-| `OTEL_PROPAGATORS` | `tracecontext,baggage` | W3C TraceContext 格式傳播宣告 |
+## Environment Variables Reference
 
-## Enterprise Helm 3 Chart 套件 (`deploy/helm/browser-agent/`)
+| Variable | Default / Example | Description |
+| :--- | :--- | :--- |
+| `APP_NAME` | `browser-agent` | Application name displayed in OpenAPI documentation and headers. |
+| `APP_VERSION` | `1.4.2` | Semantic release version. |
+| `APP_ENV` | `local` | Deployment environment identifier (`local`, `staging`, `production`). |
+| `APP_LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+| `APP_SECRET_KEY` | `change-me` | Secret key used to sign local development HS256 tokens. Must be modified in production. |
+| `DEFAULT_BROWSER_ENGINE` | `chromium` | Default Playwright execution engine (`chromium`, `firefox`, `webkit`). |
+| `DLP_ENABLED` | `true` | Enables Zero-Trust Dynamic Data Loss Prevention (DLP). |
+| `DLP_MASK_PASSWORDS` | `true` | Injects dynamic CSS Gaussian blur masks (`filter: blur(8px)`) onto password input elements. |
+| `DLP_REDACT_TOKENS` | `true` | Enables regex-based redaction of Bearer tokens, API keys, and sensitive secrets in metadata. |
+| `FEDERATION_ENABLED` | `true` | Enables multi-cluster scheduling federation and disaster recovery failover. |
+| `FEDERATION_NODE_ID` | `node-local-1` | Unique node identifier in the multi-cluster federation topology. |
+| `FEDERATION_REGION` | `local-dev` | Geographic or cloud region identifier for the node (e.g., `us-east-1`). |
+| `FEDERATION_HEARTBEAT_INTERVAL_SECONDS` | `10` | Heartbeat interval (seconds) for renewing distributed leader leases. |
+| `FEDERATION_LEASE_TTL_SECONDS` | `30` | Expiration TTL (seconds) for scheduler leader leases before triggering re-election. |
+| `REMOTE_TAKEOVER_ENABLED` | `true` | Enables bidirectional remote takeover and Human-in-the-Loop (HITL) interactive channel. |
+| `REMOTE_TAKEOVER_TIMEOUT_SECONDS` | `300` | Maximum wait timeout (seconds) for an operator during a paused takeover session. |
+| `AUTH_ENABLED` | `true` | Enforces authentication and RBAC checks across protected endpoints. |
+| `AUTH_MODE` | `local` | Authentication mode: `local` (HS256 tokens) or `jwks` (RS256 IdP verification). |
+| `AUTH_JWKS_URL` | `https://idp.example/jwks.json` | JWKS endpoint URL for fetching RS256 public keys. |
+| `AUTH_OIDC_ISSUER_URL` | `https://idp.example` | OIDC issuer URL for dynamic discovery when `AUTH_JWKS_URL` is omitted. |
+| `AUTH_JWKS_CACHE_TTL_SECONDS` | `300` | In-memory cache duration (seconds) for fetched JWKS keysets. |
+| `AUTH_JWKS_REQUEST_TIMEOUT_SECONDS` | `5` | Network timeout (seconds) for fetching JWKS keysets. |
+| `AUTH_LOCAL_TOKENS_ENABLED` | `true` | Enables the `/v1/auth/local-token` endpoint (must be `false` in production). |
+| `AUTH_JWT_ISSUER` | `browser-agent-local` | Expected JWT issuer (`iss` claim). |
+| `AUTH_JWT_AUDIENCE` | `browser-agent-api` | Expected JWT audience (`aud` claim). |
+| `AUTH_OIDC_CLIENT_ID` | `browser-agent-client` | Client ID for Enterprise OIDC Authorization Code Flow. |
+| `AUTH_OIDC_CLIENT_SECRET` | `secret` | Client Secret for Enterprise OIDC Authorization Code Flow. |
+| `AUTH_OIDC_REDIRECT_URI` | `http://localhost:8000/v1/auth/oidc/callback` | Callback redirect URI registered with the identity provider. |
+| `KMS_PROVIDER` | `local` | Key Management Service provider driver (`local`, `aws`, `vault`). |
+| `KMS_KEY_ID` | `local-kek-v1` | Key identifier for the Key Encryption Key (KEK). |
+| `KMS_MASTER_KEY` | `01234567890123456789012345678901` | 32-byte master key for local AES-256-GCM envelope encryption. |
+| `KMS_REGION` | `us-east-1` | AWS region when using `KMS_PROVIDER=aws`. |
+| `VAULT_ADDR` | `http://localhost:8200` | HashiCorp Vault server address when using `KMS_PROVIDER=vault`. |
+| `VAULT_TOKEN` | `vault-token` | HashiCorp Vault authentication token. |
+| `MULTI_PRIORITY_ENABLED` | `true` | Enables priority topic partitioning (`agent.tasks.high`, `queued`, `batch`). |
+| `QUEUE_HIGH_TOPIC` | `agent.tasks.high` | High-priority task Kafka topic. |
+| `QUEUE_DEFAULT_TOPIC` | `agent.tasks.queued` | Standard-priority task Kafka topic. |
+| `QUEUE_BATCH_TOPIC` | `agent.tasks.batch` | Low-priority batch task Kafka topic. |
+| `WORKER_POOL` | `default` | Worker pool identifier for topic subscription isolation. |
+| `LIVE_BROADCAST_ENABLED` | `true` | Enables real-time browser frame streaming via WebSockets. |
+| `SELF_HEALING_ENABLED` | `true` | Enables heuristic multi-attribute selector self-healing cascade. |
+| `SELF_HEALING_THRESHOLD` | `0.75` | Minimum similarity threshold required to adopt a self-healed selector. |
+| `DATABASE_URL` | `postgresql+psycopg://agent:agent@postgres:5432/agent` | PostgreSQL database connection string. |
+| `REDIS_URL` | `redis://redis:6379/0` | Redis instance connection string. |
+| `RELIABILITY_STORE` | `redis` | Reliability backend store (`redis` or `memory`). |
+| `KAFKA_BOOTSTRAP_SERVERS` | `kafka:9092` | Kafka broker bootstrap list. |
+| `DLQ_TOPIC` | `agent.tasks.dlq` | Dead Letter Queue topic for permanently failed tasks. |
+| `ARTIFACT_BACKEND` | `s3` | Artifact storage driver (`local` or `s3`). |
+| `ARTIFACT_BASE_PATH` | `/data/artifacts` | Filesystem root path when using local artifact storage. |
+| `MINIO_ENDPOINT` | `minio:9000` | S3-compatible object storage endpoint. |
+| `MINIO_ACCESS_KEY` | `minio` | S3 storage access key ID. |
+| `MINIO_SECRET_KEY` | `minio12345` | S3 storage secret access key. |
+| `MINIO_BUCKET` | `browser-agent` | S3 bucket name for task artifacts and session vaults. |
+| `ALLOWLIST_DOMAINS` | `example.com,example.org` | Comma-separated domain boundary allowlist for browser navigation. |
+| `TASK_CREATE_RATE_LIMIT_PER_MINUTE` | `60` | Client rate limit per minute for task submissions. |
+| `TASK_LOCK_TTL_SECONDS` | `300` | Distributed lock lease duration for executing workers. |
+| `MAX_TASK_RETRIES` | `2` | Maximum retry attempts before routing a task to DLQ. |
+| `TASK_TIMEOUT_SECONDS` | `120` | Execution timeout per task in seconds. |
+| `BROWSER_HEADLESS` | `true` | Launches Playwright in headless mode. |
+| `WORKER_SERVICE_ID` | `worker-local` | Worker identity recorded in execution audit logs. |
+| `WORKER_RECORD_VIDEO_DEFAULT` | `true` | Automatically records WebM full-session video for every task run. |
+| `SCHEDULER_ENABLED` | `true` | Enables background Cron schedule evaluation. |
+| `ALERT_WEBHOOK_URL` | `https://hooks.slack.com/...` | Slack/Discord webhook URL for production alert notifications. |
+| `ALERT_DLQ_THRESHOLD` | `5` | DLQ backlog threshold triggering Warning alert. |
+| `ALERT_AUTH_FAILURES_THRESHOLD` | `10` | Authentication failures threshold triggering Warning alert. |
+| `ALERT_QUARANTINE_THRESHOLD` | `3` | Quarantined tasks threshold triggering Warning alert. |
+| `ALERT_WEBHOOK_TIMEOUT_SECONDS` | `3.0` | Network timeout for outbound webhook dispatches. |
+| `OTEL_ENABLED` | `false` | Enables OpenTelemetry OTLP batch span streaming. |
+| `OTEL_SERVICE_NAME` | `browser-agent` | Service name attached to exported spans and traces. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4318/v1/traces` | OTLP HTTP/JSON receiver endpoint. |
+| `OTEL_RESOURCE_ATTRIBUTES` | `service.namespace=browser-agent` | Standard OpenTelemetry resource attribute key-value pairs. |
+| `OTEL_PROPAGATORS` | `tracecontext,baggage` | W3C context propagation headers. |
 
-V1.4 提供正式 Enterprise Helm 3 Chart 套件與 GitOps ArgoCD 應用清單：
+---
+
+## Enterprise Helm 3 Deployment (`deploy/helm/browser-agent/`)
+
+BrowserAgent provides production-ready Helm 3 chart templates under `deploy/helm/browser-agent/`:
 
 ```text
 deploy/helm/browser-agent/
-├── Chart.yaml                  # Chart 定義（版本 1.4.0）
-├── values.yaml                 # 預設生產級變數配置（含 V1.4 DLP、同盟、跨瀏覽器）
+├── Chart.yaml                  # Chart definition (version 1.4.2)
+├── values.yaml                 # Production default configurations
 └── templates/
-    ├── NOTES.txt               # 安裝後指引
-    ├── _helpers.tpl            # 命名與標籤模板
-    ├── configmap.yaml          # 全域環境配置
-    ├── secret.yaml             # 機密金鑰與 KMS 憑證
-    ├── api-deployment.yaml     # FastAPI Control Plane Pods
-    ├── api-service.yaml        # API Service 與端口
-    ├── worker-deployment.yaml  # Playwright Worker 資源池 Pods
-    ├── ingress.yaml            # Ingress 路由規則
-    └── keda-scaledobject.yaml  # Kafka Lag 自動水平擴展宣告
+    ├── NOTES.txt               # Post-installation instructions
+    ├── _helpers.tpl            # Template helper macros
+    ├── configmap.yaml          # Global environment variables
+    ├── secret.yaml             # Encrypted secrets and KMS configurations
+    ├── api-deployment.yaml     # FastAPI Control Plane deployment
+    ├── api-service.yaml        # Control plane ClusterIP service
+    ├── worker-deployment.yaml  # Playwright Worker fleet deployment
+    ├── ingress.yaml            # Ingress routing rules
+    └── keda-scaledobject.yaml  # KEDA Kafka Lag horizontal autoscaler
 ```
 
-Chart 語法與模板渲染檢驗：
-```powershell
+### Validating Helm Templates:
+```bash
 helm lint deploy/helm/browser-agent
 helm template browser-agent deploy/helm/browser-agent
 ```
 
-GitOps ArgoCD 部署藍圖：
-`deploy/gitops/argocd-application.yaml` 提供聲明式持續部署 Application 物件，支援自動同步（`automated.prune` & `automated.selfHeal`）。
+### GitOps ArgoCD Blueprint:
+A declarative continuous delivery application manifest is provided at `deploy/gitops/argocd-application.yaml`, supporting automated drift detection, pruning, and self-healing.
 
-## Kubernetes Deployment (`deploy/k8s/`)
+---
 
-保留原生 Kubernetes Kustomization 套件：
+## Kubernetes Kustomize Manifests (`deploy/k8s/`)
+
+For environments using raw Kubernetes manifests, a complete Kustomize package is available:
 
 ```text
 deploy/k8s/
@@ -124,44 +130,39 @@ deploy/k8s/
 └── keda-worker-scaledobject.yaml
 ```
 
-檢驗語法：
-```powershell
+Inspect rendered manifests:
+```bash
 kubectl kustomize deploy/k8s/
 ```
 
-## V1.3 Production-like Compose
+---
 
-V1.3 提供 `.env.production.example` 與 `docker-compose.prod.yml`，可用來審查 production-like Compose 設定：
+## Production-Like Compose Verification
 
-```powershell
+To inspect hardened production Compose configurations:
+
+```bash
 docker compose --env-file .env.production.example -f docker-compose.prod.yml config
 ```
 
-這份範本預設：
-
+Baseline production hardening checks:
 - `APP_ENV=production`
-- `APP_VERSION=1.3.0`
-- `AUTH_MODE=jwks`
-- `AUTH_LOCAL_TOKENS_ENABLED=false`
+- `AUTH_MODE=jwks` with `AUTH_LOCAL_TOKENS_ENABLED=false`
 - `RELIABILITY_STORE=redis`
 - `ARTIFACT_BACKEND=s3`
 - `SCHEDULER_ENABLED=true`
-- `OTEL_ENABLED=false`
-- `KMS_PROVIDER=local`
-- `TELEMETRY_STREAM_ENABLED=true`
-- `SELF_HEALING_ENABLED=true`
+- `DLP_ENABLED=true`
+- `REMOTE_TAKEOVER_ENABLED=true`
 
-它是 Compose production readiness baseline；企業生產上線建議搭配 `deploy/helm/browser-agent/` 或 `deploy/k8s/` 進行 Kubernetes 部署。
+---
 
 ## Docker Compose Services
 
-| Service | Port | 說明 |
-|---|---:|---|
-| `api` | 8000 | FastAPI control plane 與 Operations Center |
-| `worker` | none | Kafka consumer + Playwright runner |
-| `postgres` | 5432 | System of record |
-| `redis` | 6379 | Reliability store 與排程分散式搶鎖 |
-| `kafka` | 9092 | Task event bus (high, queued, batch, dlq) |
-| `minio` | 9000, 9001 | Active S3-compatible artifact backend |
-
-Docker Compose 預設 `ARTIFACT_BACKEND=s3`，`scripts/bootstrap.py` 會確認 bucket 已建立。
+| Service | Port | Architectural Role |
+| :--- | :--- | :--- |
+| `api` | 8000 | FastAPI Control Plane & Operations Center web console |
+| `worker` | Internal | Kafka consumer + Playwright multi-engine runner |
+| `postgres` | 5432 | Relational database (Tasks, Schedules, Audit Logs) |
+| `redis` | 6379 | Reliability store, rate limiter, and distributed locks |
+| `kafka` | 9092 | Distributed task event bus (`high`, `queued`, `batch`, `dlq`) |
+| `minio` | 9000, 9001 | S3-compatible artifact storage backend |

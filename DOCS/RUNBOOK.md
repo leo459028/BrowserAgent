@@ -1,224 +1,184 @@
-# Runbook
+# Operations Runbook (v1.4.2)
 
-本 runbook 說明如何在本機 Docker Compose、Kubernetes 與 Helm 3 驗證 V1.4 Operations Center、雙向即時遠端接管（HITL）、跨瀏覽器矩陣執行、Zero-Trust 動態資料防洩、多叢集排程同盟與容災接管、OIDC SSO、KMS 信封加密與 production 配置。
+This runbook outlines standard operating procedures for deploying, verifying, monitoring, and troubleshooting BrowserAgent across local Docker Compose, Kubernetes, and Helm environments.
 
-## 1. 啟動 Stack
+---
 
-```powershell
-copy .env.example .env
+## 1. Stack Initialization
+
+Initialize environment configurations and spin up the containerized architecture:
+
+```bash
+cp .env.example .env
 docker compose up -d --build
 ```
 
-執行資料庫遷移（包含 V1.4 `0004_v14_federation_and_matrix`）：
-```powershell
+Execute Alembic database migrations:
+```bash
 docker compose exec -T api alembic upgrade head
 ```
 
-檢查：
-
-```powershell
+Verify service status and readiness:
+```bash
 docker compose ps
-curl.exe http://127.0.0.1:8000/healthz
-curl.exe http://127.0.0.1:8000/readyz
+curl http://127.0.0.1:8000/healthz
+curl http://127.0.0.1:8000/readyz
 ```
 
-## 2. 開啟 Operations Center
+---
+
+## 2. Accessing the Operations Center
+
+Open your web browser and navigate to:
 
 ```text
 http://127.0.0.1:8000/operations
 ```
 
-應看到：
+Verify the following UI components:
+- **Title Bar**: `Browser Agent v1.4 Operations Center` with backward compatibility notice (`Browser Agent v1.2 Operations Center compatible`).
+- **Header Badges**: `DLP Shield: Active`, `Cluster: Federation Online`, `Platform: K8s/Helm Ready`, `OTLP: Ready`, and `SSO Login with IdP`.
+- **Create Task Card**: Browser Engine selector (`Chromium`, `Firefox`, `WebKit`), DLP protection toggle, and `Dispatch Matrix (3 Engines)` button.
+- **Live Telemetry Stream Card**: Low-latency canvas viewer, `Abort Task` button, and HITL Takeover toolbar (`Pause (Takeover)`, `Resume Task`, `Send Keys`, `Remote Key Input`).
+- **Cross-Browser Matrix Comparison Panel**: Aggregated side-by-side performance, duration deltas, self-healing status, and screenshots.
+- **Zero-Trust Dynamic DLP Status Panel**: Regex rules catalog, Gaussian blur masking toggles, and token redaction metrics.
+- **Multi-Cluster Scheduling Federation Panel**: Regional node heartbeats, leader lease status, and one-click forced re-election.
+- **Scheduled Tasks Card**: Cron schedule manager, active toggles, and `Run Now` triggers.
+- **Session Vault Card**: KMS-encrypted credentials list, `Validate` decryption round-trip, and `Revoke` button.
+- **Priority Queues Telemetry Card**: Real-time depths across `High`, `Queued`, and `Batch` Kafka topics.
+- **Production Alerting Center**: Real-time evaluation of 7 operational reliability rules and manual webhook test dispatch.
+- **Trace Inspector**: Distributed trace hierarchy lookup by Trace ID.
+- **Visual Step Replay**: Step tabs displaying execution timing (ms), DOM summaries, screenshots, and green `Self-Healed ✓` badges.
 
-- `Browser Agent v1.4 Operations Center (維運中心)`（包含相容標籤 `Browser Agent v1.2 Operations Center compatible`）
-- 頂部狀態列：K8s Mode、OTLP Exporter、**DLP Shield（動態防洩徽章）、Cluster Fed（同盟拓撲徽章）**與 SSO Login 按鈕
-- `Create Task` 卡片：包含 **Browser Engine 選擇下拉選單（Chromium, Firefox, WebKit）**、DLP 保護勾選框與 **`Dispatch Matrix (3 Engines)` 矩陣派發按鈕**
-- `Live Telemetry Stream` 卡片：WebSocket 畫面畫布、Abort Task 按鈕，以及 **V1.4 雙向接管控制條（`Pause (Takeover)`, `Resume Task`, `Send Keys`, `Key Input`, `Takeover Status`）**
-- `Cross-Browser Matrix Comparison` 面板：聚合檢視跨 Chromium/Firefox/WebKit 執行結果、差異化對比與自癒指標
-- `Zero-Trust Dynamic DLP Status` 面板：動態像素遮罩規則、正則過濾清單與防洩統計
-- `Multi-Cluster Scheduling Federation Topology` 面板：檢視叢集各區域節點存活心跳、Leader 租約與一鍵強制重選
-- `Scheduled Tasks` 卡片（Cron 定時巡檢、建立排程、即時手動觸發）
-- `Session Vault` 卡片（儲存的工作階段、KMS 信封加密指示、一鍵 Validate 與 Revoke）
-- `Priority Queues Telemetry` 卡片（High, Queued, Batch 深度即時監控）
-- `KMS Envelope Encryption Engine` 卡片（Provider, Key ID, 演算法與加解密延遲）
-- `Video Replay` 卡片（內建 HTML5 WebM 播放器，隨選隨放瀏覽器錄影）
-- `Production Alerting Center`（7 大規則狀態、Webhook 狀態指示、Test Dispatch）
-- `Trace Inspector`（分散式追蹤 Trace ID 查詢與 Span 樹狀檢視）
-- `Operations Readiness`、`Production Readiness`、`Observability`
-- `Visual Step Replay & Replay Timeline`（含綠色自癒標籤與人機介入審計）
+---
 
+## 3. Authentication Verification Smoke Test
 
-## 3. Auth Smoke
+Acquire an operator developer token and verify identity:
 
-```powershell
-$operator = Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:8000/v1/auth/local-token `
-  -ContentType "application/json" `
-  -Body '{"role":"operator"}'
+```bash
+TOKEN=$(curl -s -X POST http://127.0.0.1:8000/v1/auth/local-token \
+  -H "Content-Type: application/json" \
+  -d '{"role":"operator"}' | jq -r .access_token)
 
-Invoke-RestMethod -Method Get `
-  -Uri http://127.0.0.1:8000/v1/auth/me `
-  -Headers @{ Authorization = "Bearer $($operator.access_token)" }
+curl -s -X GET http://127.0.0.1:8000/v1/auth/me \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
-## 4. Operations Readiness & Alerts 檢視
+---
 
-```powershell
-Invoke-RestMethod -Method Get `
-  -Uri http://127.0.0.1:8000/v1/ops/readiness `
-  -Headers @{ Authorization = "Bearer $($operator.access_token)" }
+## 4. Diagnostics & Production Hardening Audits
 
-Invoke-RestMethod -Method Get `
-  -Uri http://127.0.0.1:8000/v1/ops/alerts `
-  -Headers @{ Authorization = "Bearer $($operator.access_token)" }
+### Inspect System Readiness & Alerts
+```bash
+curl -s -X GET http://127.0.0.1:8000/v1/ops/readiness \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -s -X GET http://127.0.0.1:8000/v1/ops/alerts \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
-Docker Compose 預期 artifact backend 為 `s3`，reliability backend 為 `redis`。
+### Test Outbound Webhook Dispatch (Admin Role)
+```bash
+ADMIN_TOKEN=$(curl -s -X POST http://127.0.0.1:8000/v1/auth/local-token \
+  -H "Content-Type: application/json" \
+  -d '{"role":"admin"}' | jq -r .access_token)
 
-## 4.1 測試外部告警通道（Admin）
-
-若設定了 `ALERT_WEBHOOK_URL`（或欲驗證派發流程）：
-
-```powershell
-$admin = Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:8000/v1/auth/local-token `
-  -ContentType "application/json" `
-  -Body '{"role":"admin"}'
-
-Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:8000/v1/ops/alerts/test-dispatch `
-  -Headers @{ Authorization = "Bearer $($admin.access_token)" } `
-  -ContentType "application/json" `
-  -Body '{"rule_id":"test_alert","severity":"info","message":"Manual verification"}'
+curl -s -X POST http://127.0.0.1:8000/v1/ops/alerts/test-dispatch \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"rule_id":"test_alert","severity":"info","message":"Manual verification dispatch"}'
 ```
 
-## 4.2 Production-like Compose Config
-
-```powershell
+### Validate Production-Like Compose Configuration
+```bash
 docker compose --env-file .env.production.example -f docker-compose.prod.yml config
 ```
 
-此命令只檢查 Compose config 是否可被解析，不會啟動服務。範本預期使用 `APP_ENV=production`、`AUTH_MODE=jwks`、`AUTH_LOCAL_TOKENS_ENABLED=false`、`RELIABILITY_STORE=redis` 與 `ARTIFACT_BACKEND=s3`。
-
-## 4.3 Kubernetes 生產套件檢驗
-
-驗證 `deploy/k8s/` 產出之 K8s 物件宣告：
-
-```powershell
+### Validate Kubernetes Manifests & Helm Charts
+```bash
+# Kustomize validation
 kubectl kustomize deploy/k8s/
-```
 
-## 4.4 Enterprise Helm 3 Chart 套件檢驗
-
-驗證 `deploy/helm/browser-agent/` 之語法與模板渲染：
-
-```powershell
+# Helm Chart linting and templating
 helm lint deploy/helm/browser-agent
 helm template browser-agent deploy/helm/browser-agent
 ```
 
-## 5. Normal Task E2E、視訊錄影與 Visual Step Replay 驗證
+---
 
-1. 在 `/operations` 左側 `Create Task` 卡片選擇 `Normal planner task`，點擊 `Create task`。
-2. 任務建立後進入 `pending_approval`（待審核）狀態，左下方列表選中該任務。
-3. 此時右上角的 **`Approve selected` 按鈕會由灰轉綠（啟用狀態）**。點擊進行人工核准。
-4. Worker 消費佇列並執行瀏覽器流程，執行完畢後任務狀態轉為綠色 `completed`。
-5. 在右側 `Visual Step Replay` 點選步驟分頁標籤（如 Step 1、Step 2），可即時查看該步驟的耗時（ms）、Span ID、DOM 摘要與截圖縮圖。若觸發選擇器自癒，步驟將標註綠色 `Self-Healed ✓`。
-6. 若任務啟用錄影，右上側 `Execution Video Recording` 播放器會載入全行程 WebM 錄影，可點擊播放按鈕觀看完整操作流程。
-7. 將任務的 Trace ID 貼入左側 `Trace Inspector`，點選 `Lookup`，可檢視完整跨服務之 Span 階層追蹤圖。
+## 5. End-to-End Task Lifecycle & Video Replay
 
-## 6. Scheduled Tasks 與 Session Vault 驗證
+1. In `/operations`, go to **`Create Task`**, select `Normal planner task`, and click **`Create task`**.
+2. The task enters `pending_approval`. Select the task from the **`Recent Tasks`** list.
+3. The **`Approve selected`** button switches to active bright green. Click to approve.
+4. The assigned worker consumes the task, launches Playwright, and executes the navigation flow. Status transitions to `completed`.
+5. Under **`Visual Step Replay`**, click individual step tabs to inspect duration (ms), DOM summaries, and screenshot thumbnails. If self-healing occurred, steps display a green `Self-Healed ✓` badge.
+6. The **`Execution Video Recording`** card loads the full-session WebM video recording for playback.
+7. Copy the task's Trace ID and paste it into the **`Trace Inspector`** to explore the hierarchical span tree.
 
-### Scheduled Tasks 定時巡檢
-1. 在 `/operations` 的 `Scheduled Tasks` 卡片點擊 `Create Schedule`，輸入名稱與 Cron 表達式（如 `*/15 * * * *`）。
-2. 在列表選中該排程，點擊 `Run Now` 立即派發任務。
-3. 任務列表會出現對應的前置任務，依序進行審核與執行。
+---
 
-### Session Vault 工作階段管理與 KMS 驗證
-1. 在 `Session Vault` 卡片點擊 `Refresh Sessions`，可查閱目前所有儲存之 Playwright storage_state 憑證及其 KMS 加密標識。
-2. 點擊 `Validate` 按鈕，系統呼叫 `/v1/sessions/{name}/validate` 即時執行 KMS 解密迴路校驗，回報有效 Cookie 與 Storage 數量。
-3. 當需要撤銷已失效或需輪換的 Session 時，點擊該筆資料旁的 `Revoke`，系統即刻將其標記為已撤銷，後續任務不再重用。
+## 6. Scheduled Tasks & Session Vault Operations
 
-## 6.1 多優先權佇列與 Worker 分流檢視
+### Scheduled Tasks
+1. Under **`Scheduled Tasks`**, click `Create Schedule`, entering a name and Cron expression (e.g., `0 9 * * *`).
+2. Select the schedule and click **`Run Now`** to trigger immediate task dispatch.
 
-```powershell
-Invoke-RestMethod -Method Get `
-  -Uri http://127.0.0.1:8000/v1/ops/queues `
-  -Headers @{ Authorization = "Bearer $($operator.access_token)" }
-```
-可查閱 `agent.tasks.high`、`agent.tasks.queued`、`agent.tasks.batch` 深度與 Worker pool 訂閱情況。
+### Session Vault
+1. Under **`Session Vault`**, click **`Refresh Sessions`** to review encrypted `storage_state` credentials.
+2. Click **`Validate`** to execute a real-time KMS decryption round-trip and verify AAD tenant integrity.
+3. Click **`Revoke`** to mark a compromised or obsolete session as revoked.
 
-## 6.2 WebSocket Live Stream 廣播與線上 Abort 測試
+---
 
-1. 當有任務處於 `executing` 狀態時，在 Operations Center 點選該任務，`Live Telemetry Stream` 畫布會自動建立 WebSocket 連線（`WS /v1/tasks/{id}/live-stream`）並以 2 FPS 渲染當前頁面截圖。
-2. 若需緊急中斷，點選紅色的 **`Abort Task`** 按鈕（呼叫 `POST /v1/tasks/{id}/abort`）。
-3. Worker 即時捕獲中止信號，安全釋放 Playwright 資源，任務狀態轉為 `aborted`。
+## 7. Operational Drills: HITL, Matrix & Federation
 
-## 6.3 雙向即時遠端接管（HITL）人工協作演練
+### Bidirectional Remote Takeover (HITL) Drill
+1. While a task is executing, click orange **`Pause (Takeover)`** (`POST /v1/tasks/{id}/pause`).
+2. Verify status updates to **`PAUSED (TAKEOVER)`** and automated execution halts.
+3. Click on the live stream canvas to inject a click (`POST /v1/tasks/{id}/interact` with `action: click`).
+4. Enter text in `Remote Key Input` and click **`Send Keys`** to inject typing (`action: type`).
+5. Click **`Resume Task`** (`POST /v1/tasks/{id}/resume`) to resume autonomous execution. Verify intervention duration is audited.
 
-1. 當執行中之任務遇到複雜驗證碼或需要人為干預時，在 `Live Telemetry Stream` 卡片點擊橘色 **`Pause (Takeover)`** 按鈕（呼叫 `POST /v1/tasks/{id}/pause`）。
-2. 接管狀態徽章轉為橘色 `PAUSED (TAKEOVER)`，Worker 暫停自動化推進。
-3. **滑鼠操作**：直接在即時畫面 Canvas 上點選目標元素位置，前端自動計算座標並調用 `POST /v1/tasks/{id}/interact` 派發 `click` 動作，Worker 即時向 Playwright 注入點擊。
-4. **文字輸入**：在 `Remote Key Input` 文字框輸入需填入之文字或驗證碼，點選 **`Send Keys`** 按鈕下發 `type` 動作。
-5. 人工處理完成後，點擊綠色 **`Resume Task`** 按鈕（呼叫 `POST /v1/tasks/{id}/resume`）。
-6. Worker 退出暫停迴圈繼續執行，自動將人機介入總時間與操作者紀錄至 `task.human_intervened = True` 與 Audit Log。
+### Cross-Browser Matrix Execution Drill
+1. In `Create Task`, click **`Dispatch Matrix (3 Engines)`** (`POST /v1/tasks/matrix`).
+2. Approve the generated tasks.
+3. In the **`Cross-Browser Matrix Comparison`** panel, review aggregated execution times, verdicts, self-healing triggers, and rendering differences across Chromium, Firefox, and WebKit.
 
-## 6.4 跨瀏覽器矩陣執行與差異比對演練
+### Multi-Cluster Federation Failover Drill
+1. In the **`Multi-Cluster Scheduling Federation Topology`** panel, observe node heartbeats and the designated Leader node.
+2. Click **`Force Re-election`** next to a standby node (`POST /v1/ops/federation/re-election`).
+3. Verify leadership lease migrations immediately to the standby node without downtime.
 
-1. 在 `Create Task` 卡片輸入測試任務標題與操作說明。
-2. 點擊藍色 **`Dispatch Matrix (3 Engines)`** 按鈕（呼叫 `POST /v1/tasks/matrix`），系統自動平行生成 Chromium、Firefox、WebKit 三筆任務並共享同一 `matrix_id`。
-3. 在左側任務列表批次核准後，Worker 資源池同時啟動不同瀏覽器內核獨立執行。
-4. 任務完成後，在下方 **`Cross-Browser Matrix Comparison`** 面板檢視矩陣聚合狀態，比對三種瀏覽器核心之執行耗時、評估 Verdict、DOM 自癒情形與截圖產物。
+---
 
-## 6.5 Zero-Trust DLP 動態防洩與多叢集同盟容災演練
+## 8. Dead Letter Queue (DLQ) Remediation
 
-1. **DLP 狀態驗證**：在 **`Zero-Trust Dynamic DLP Status`** 面板檢視防護狀態，確認密碼高斯模糊遮罩（`filter: blur(8px)`）與 Bearer Token / API Key 正則過濾規則均處於 `active`。
-2. **多叢集同盟拓撲**：在 **`Multi-Cluster Scheduling Federation Topology`** 面板可檢視跨區域節點心跳時間戳、活躍排程數與當前 Leader 節點。
-3. **同盟容災主從切換（Failover）**：點選備援節點旁的 **`Force Re-election`** 按鈕（呼叫 `POST /v1/ops/federation/re-election`），系統即刻強制將 Leader 排程租約轉移至備援節點，達成零停機高可用切換。
-
-## 7. DLQ Operations
-
-- `Refresh DLQ`：查 failed DLQ tasks。
-- 單筆 `replay`：把 failed task 放回 `queued`。
-- `Bulk DLQ replay`：批次 replay non-quarantined tasks。
-- Quarantine API：
-
-```powershell
-Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:8000/v1/dlq/tasks/<TASK_ID>/quarantine `
-  -Headers @{ Authorization = "Bearer $($operator.access_token)" } `
-  -ContentType "application/json" `
-  -Body '{"reason":"poison message"}'
-```
-
-## 8. 維運疑難排解與升級說明
-
-### 既有版本升級至 V1.4
-- 執行資料庫遷移確認最新 schema（含 `0004_v14_federation_and_matrix.py`）：
-  ```powershell
-  alembic upgrade head
-  ```
-- 重新建置映像檔：
-  ```powershell
-  docker compose up -d --build api worker
+- Query DLQ: Inspect failed tasks via `GET /v1/dlq/tasks`.
+- Replay: Replay an individual task via `POST /v1/dlq/tasks/{id}/replay` or bulk replay via `POST /v1/dlq/tasks/bulk-replay`.
+- Quarantine: Isolate poisonous payloads:
+  ```bash
+  curl -X POST http://127.0.0.1:8000/v1/dlq/tasks/<TASK_ID>/quarantine \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"reason":"Poisonous task payload causing unrecoverable browser panic"}'
   ```
 
+---
 
-### Kafka / Zookeeper Stale Session 處理
-若容器重啟時出現 `NodeExists` 或 Zookeeper session timeout 導致 Kafka 退出，請重啟相依服務：
-```powershell
+## 9. Troubleshooting & Recovery
+
+### Kafka / Zookeeper Stale Sessions
+If containers experience `NodeExists` or Zookeeper session timeout issues during rapid restarts:
+```bash
 docker compose restart zookeeper kafka api worker
 ```
 
-## 9. 測試命令
-
-```powershell
+### Full Automated Verification Suite
+```bash
 pytest -q
 python -m compileall src tests worker alembic
 git diff --check
-kubectl kustomize deploy/k8s/
-helm lint deploy/helm/browser-agent
-helm template deploy/helm/browser-agent
 docker compose exec -T api pytest -q
-docker compose --env-file .env.production.example -f docker-compose.prod.yml config
 ```
